@@ -1,0 +1,15 @@
+[project]
+name = "northau"
+version = "0.1.0"
+description = "A general-purpose agent framework inspired by Claude Code's architecture"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.0.0",
+    "requests>=2.25.0",
+    "jinja2>=3.0.0",
+    "beautifulsoup4>=4.9.0",
+    "openai>=1.0.0",
+    "httpx>=0.25.0",
+]

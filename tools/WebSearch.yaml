@@ -1,0 +1,27 @@
+name: WebSearch
+description: >-
+  Search the web for information.
+  
+  Usage:
+  - Search for information on the web
+  - Returns search results with titles, URLs, and snippets
+  - Configurable number of results
+
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: Search query string
+    num_results:
+      type: integer
+      default: 10
+      description: Number of results to return
+    search_engine:
+      type: string
+      default: "duckduckgo"
+      description: Search engine to use
+  required:
+    - query
+  additionalProperties: false
+  $schema: http://json-schema.org/draft-07/schema#
