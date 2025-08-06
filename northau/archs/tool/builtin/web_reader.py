@@ -34,6 +34,8 @@ class HtmlParser:
         if response.status_code == 200:
             response_data = response.json()
             page_content = response_data["content"]
+            if 'extracted_text' in response_data:
+                page_content = response_data['extracted_text']
             return True, page_content
         else:
             logger.warning(
