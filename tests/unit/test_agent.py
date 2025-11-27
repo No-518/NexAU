@@ -128,6 +128,24 @@ class TestAgent:
 
             assert global_storage.get("tracer") is tracer
 
+    def test_agent_preserves_existing_global_tracer(self, agent_config, global_storage):
+        """Nested agents should reuse tracer already stored in global storage without mutating config."""
+        with patch("nexau.archs.main_sub.agent.openai") as mock_openai:
+            mock_openai.OpenAI.return_value = Mock()
+
+            parent_tracer = Mock(spec=BaseTracer)
+            global_storage.set("tracer", parent_tracer)
+
+            agent_payload = agent_config.model_dump()
+            child_tracer = Mock(spec=BaseTracer)
+            agent_payload["tracers"] = [child_tracer]
+            config_with_tracer = AgentConfig(**agent_payload)
+
+            Agent(config_with_tracer, global_storage)
+
+            assert global_storage.get("tracer") is parent_tracer
+            assert config_with_tracer.resolved_tracer is child_tracer
+
     def test_initialize_mcp_tools_success(self, agent_config, global_storage):
         """Test successful MCP tools initialization."""
         with patch("nexau.archs.main_sub.agent.openai") as mock_openai:
