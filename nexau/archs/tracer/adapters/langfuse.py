@@ -69,6 +69,7 @@ class LangfuseTracer(BaseTracer):
         public_key: str | None = None,
         secret_key: str | None = None,
         host: str | None = None,
+        session_id: str | None = None,
         debug: bool = False,
         enabled: bool = True,
     ):
@@ -105,6 +106,8 @@ class LangfuseTracer(BaseTracer):
         if host:
             client_kwargs["host"] = host
         client_kwargs["debug"] = debug
+
+        self.session_id = str(uuid.uuid4()) if session_id is None else session_id
 
         self.client = Langfuse(**client_kwargs)
         logger.info(f"Langfuse tracer initialized (host: {host or 'default'})")
@@ -156,6 +159,7 @@ class LangfuseTracer(BaseTracer):
             "name": name,
             "metadata": {
                 "span_type": span_type.value,
+                "langfuse_session_id": self.session_id,
                 **(attributes or {}),
             },
         }
