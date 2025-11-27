@@ -20,20 +20,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-try:
-    import openai
-    from langfuse import Langfuse
-
-    LANGFUSE_AVAILABLE = True
-except ImportError:
-    LANGFUSE_AVAILABLE = False
-    Langfuse = None
-    try:
-        import openai
-    except ImportError:
-        openai = None
-
 import anthropic
+import openai
 
 from nexau.archs.llm.llm_config import LLMConfig
 from nexau.archs.main_sub.agent_context import AgentContext, GlobalStorage
@@ -49,6 +37,8 @@ from nexau.archs.main_sub.tool_call_modes import (
 )
 from nexau.archs.main_sub.utils.cleanup_manager import cleanup_manager
 from nexau.archs.main_sub.utils.token_counter import TokenCounter
+from nexau.archs.tracer.context import TraceContext
+from nexau.archs.tracer.core import BaseTracer, SpanType
 
 # Setup logger for agent execution
 logger = logging.getLogger(__name__)
@@ -78,6 +68,8 @@ class Agent:
         """
         self.config = config
         self.global_storage = global_storage if global_storage is not None else GlobalStorage()
+        if self.config.resolved_tracer is not None:
+            self.global_storage.set("tracer", self.config.resolved_tracer)
         # Prefer the tool_call_mode defined on AgentConfig when an ExecutionConfig
         # is not explicitly provided to keep Python-created agents consistent with
         # YAML-created ones.
@@ -89,8 +81,6 @@ class Agent:
 
         # Initialize services
         self.openai_client = self._initialize_openai_client()
-        self.langfuse_client = self._initialize_langfuse_client()
-        self.langfuse_trace_id = self.langfuse_client.create_trace_id() if self.langfuse_client else ""
 
         # Initialize MCP tools if configured
         if self.config.mcp_servers:
@@ -134,37 +124,6 @@ class Agent:
                 return openai.OpenAI(**client_kwargs)
         except Exception as e:
             logger.error(f"❌ Failed to initialize OpenAI client: {e}")
-            return None
-
-    def _initialize_langfuse_client(self) -> Langfuse | None:
-        """Initialize Langfuse client if available."""
-        if not LANGFUSE_AVAILABLE:
-            return None
-
-        try:
-            import os
-
-            public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
-            secret_key = os.getenv("LANGFUSE_SECRET_KEY")
-            host = os.getenv("LANGFUSE_HOST")
-
-            if public_key and secret_key:
-                client = Langfuse(
-                    public_key=public_key,
-                    secret_key=secret_key,
-                    host=host,
-                )
-                logger.info(
-                    f"✅ Langfuse client initialized with host: {host or 'default'}",
-                )
-                return client
-            else:
-                logger.warning(
-                    "⚠️ Langfuse environment variables not found, tracing disabled",
-                )
-                return None
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Langfuse client: {e}")
             return None
 
     def _initialize_mcp_tools(self) -> None:
@@ -240,12 +199,12 @@ class Agent:
         """Build structured tool definitions for the active tool_call_mode."""
         if self.tool_call_mode == "openai":
             return self._build_openai_tool_specs()
-        if self.tool_call_mode == "anthorpic":
-            return self._build_anthorpic_tool_specs()
+        if self.tool_call_mode == "anthropic":
+            return self._build_anthropic_tool_specs()
         return []
 
-    def _build_anthorpic_tool_specs(self) -> list[dict[str, Any]]:
-        """Convert tools and sub-agents into Anthorpic tool definitions."""
+    def _build_anthropic_tool_specs(self) -> list[dict[str, Any]]:
+        """Convert tools and sub-agents into anthropic tool definitions."""
         tools_spec: list[dict[str, Any]] = []
 
         for tool in self.config.tools:
@@ -303,7 +262,6 @@ class Agent:
             max_running_subagents=self.exec_config.max_running_subagents,
             retry_attempts=self.exec_config.retry_attempts,
             token_counter=self.config.token_counter or TokenCounter(),
-            langfuse_client=self.langfuse_client,
             after_model_hooks=self.config.after_model_hooks,
             after_tool_hooks=self.config.after_tool_hooks,
             before_model_hooks=self.config.before_model_hooks,
@@ -340,6 +298,12 @@ class Agent:
         if context:
             merged_context.update(context)
 
+        # Get tracer from global storage
+        tracer: BaseTracer | None = self.global_storage.get("tracer")
+
+        # Determine span type based on whether this is a sub-agent
+        span_type = SpanType.SUB_AGENT if parent_agent_state else SpanType.AGENT
+
         # Create agent context
         with AgentContext(context=merged_context) as ctx:
             # Build and add system prompt to history
@@ -366,109 +330,114 @@ class Agent:
                 global_storage=self.global_storage,
                 parent_agent_state=parent_agent_state,
             )
-            agent_state.langfuse_trace_id = self.langfuse_trace_id
 
+            # Execute with or without tracing
+            if tracer:
+                return self._run_with_tracing(
+                    tracer=tracer,
+                    span_type=span_type,
+                    message=message,
+                    agent_state=agent_state,
+                    merged_context=merged_context,
+                )
+            else:
+                return self._run_inner(agent_state, merged_context)
+
+    def _run_with_tracing(
+        self,
+        tracer: BaseTracer,
+        span_type: SpanType,
+        message: str,
+        agent_state: AgentState,
+        merged_context: dict[str, Any],
+    ) -> str:
+        """Execute agent with tracing enabled.
+
+        Args:
+            tracer: The tracer instance to use
+            span_type: Type of span (AGENT or SUB_AGENT)
+            message: User message
+            agent_state: Agent state instance
+            merged_context: Merged context dictionary
+
+        Returns:
+            Agent response string
+        """
+        span_name = f"Agent: {self.config.name}"
+        inputs = {
+            "message": message,
+            "agent_id": self.config.agent_id,
+        }
+        attributes = {
+            "agent_name": self.config.name,
+            "model": getattr(self.config.llm_config, "model", None),
+        }
+
+        trace_ctx = TraceContext(tracer, span_name, span_type, inputs, attributes)
+        with trace_ctx:
             try:
-                # Execute using the executor
-                if self.langfuse_client:
-                    try:
-                        from datetime import datetime
-
-                        span_kwargs = {
-                            "input": message,
-                            "name": f"agent_{self.config.name}",
-                            "metadata": {
-                                "agent_name": self.config.name,
-                                "max_iterations": self.exec_config.max_iterations,
-                                "model": self.config.llm_config.model,
-                                "system_prompt_type": self.config.system_prompt_type,
-                                "timestamp": datetime.now().isoformat(),
-                            },
-                        }
-
-                        if parent_agent_state and parent_agent_state.langfuse_span:
-                            span = parent_agent_state.langfuse_span.start_span(**span_kwargs)
-                        else:
-                            span = self.langfuse_client.start_span(**span_kwargs)
-
-                        # with langfuse_observer(
-                        #     **span_kwargs,
-                        # ) as current_span:
-                        logger.info(
-                            f"📊 Created Langfuse span for agent: {self.config.name}",
-                        )
-
-                        agent_state.langfuse_span = span
-                        response, updated_messages = self.executor.execute(
-                            self.history,
-                            agent_state,
-                        )
-                        self.history = updated_messages
-
-                        span.update(
-                            output=response,
-                            metadata={
-                                "response_length": len(response),
-                                "history_length": len(self.history),
-                                "execution_completed": True,
-                            },
-                        )
-                        span.end()
-
-                        logger.info(
-                            f"📤 Langfuse span completed for agent: {self.config.name}",
-                        )
-
-                        self.langfuse_client.flush()
-
-                    except Exception as langfuse_error:
-                        logger.warning(
-                            f"⚠️ Langfuse tracing failed: {langfuse_error}",
-                        )
-                        response, updated_messages = self.executor.execute(
-                            self.history,
-                            agent_state,
-                        )
-                        self.history = updated_messages
-                else:
-                    response, updated_messages = self.executor.execute(
-                        self.history,
-                        agent_state,
-                    )
-                    self.history = updated_messages
-
-                # Add final assistant response to history if not already included
-                if not self.history or self.history[-1]["role"] != "assistant" or self.history[-1]["content"] != response:
-                    self.history.append(
-                        {"role": "assistant", "content": response},
-                    )
-
-                logger.info(
-                    f"✅ Agent '{self.config.name}' completed execution",
-                )
+                response = self._run_inner(agent_state, merged_context)
+                # Set outputs - TraceContext will handle ending the span
+                trace_ctx.set_outputs({"response": response})
                 return response
+            except Exception:
+                # TraceContext will handle the error, but we still need to re-raise
+                raise
 
-            except Exception as e:
-                logger.error(
-                    f"❌ Agent '{self.config.name}' encountered error: {e}",
+    def _run_inner(
+        self,
+        agent_state: AgentState,
+        merged_context: dict[str, Any],
+    ) -> str:
+        """Inner execution logic without tracing wrapper.
+
+        Args:
+            agent_state: Agent state instance
+            merged_context: Merged context dictionary
+
+        Returns:
+            Agent response string
+        """
+        try:
+            # Execute using the executor
+            response, updated_messages = self.executor.execute(
+                self.history,
+                agent_state,
+            )
+            self.history = updated_messages
+
+            # Add final assistant response to history if not already included
+            if not self.history or self.history[-1]["role"] != "assistant" or self.history[-1]["content"] != response:
+                self.history.append(
+                    {"role": "assistant", "content": response},
                 )
 
-                if self.config.error_handler:
-                    error_response = self.config.error_handler(
-                        e,
-                        self,
-                        merged_context,
-                    )
-                    self.history.append(
-                        {"role": "assistant", "content": error_response},
-                    )
-                    return error_response
-                else:
-                    error_message = f"Error: {str(e)}"
-                    self.history.append(
-                        {"role": "assistant", "content": error_message},
-                    )
-                    raise
+            logger.info(
+                f"✅ Agent '{self.config.name}' completed execution",
+            )
+            return response
+
+        except Exception as e:
+            logger.error(
+                f"❌ Agent '{self.config.name}' encountered error: {e}",
+            )
+
+            if self.config.error_handler:
+                error_response = self.config.error_handler(
+                    e,
+                    self,
+                    merged_context,
+                )
+                self.history.append(
+                    {"role": "assistant", "content": error_response},
+                )
+                return error_response
+            else:
+                error_message = f"Error: {str(e)}"
+                self.history.append(
+                    {"role": "assistant", "content": error_message},
+                )
+                raise
 
     def add_tool(self, tool) -> None:
         """Add a tool to the agent."""
@@ -536,6 +505,7 @@ def create_agent(
     # Global storage parameter
     global_storage: GlobalStorage | None = None,
     tool_call_mode: str = "xml",
+    tracers: list[BaseTracer] | None = None,
     **llm_kwargs,
 ) -> Agent:
     """Create a new agent with specified configuration."""
@@ -573,6 +543,7 @@ def create_agent(
         tool_call_mode=tool_call_mode,
         retry_attempts=retry_attempts,
         timeout=timeout,
+        tracers=tracers or [],
     )
 
     return Agent(agent_config, global_storage)

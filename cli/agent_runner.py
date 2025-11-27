@@ -26,8 +26,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import langfuse
-
 # Add parent directory to path to import nexau
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -282,6 +280,7 @@ def main():
                 .build_llm_config()
                 .build_mcp_servers()
                 .build_hooks()
+                .build_tracers()
                 .build_tools()
                 .build_sub_agents()
                 .build_skills()
@@ -343,9 +342,6 @@ def main():
                             },
                         },
                     )
-
-                    if agent.langfuse_trace_id:
-                        response += f"\n\nLangfuse trace URL: {langfuse.get_client().get_trace_url(trace_id=agent.langfuse_trace_id)}"
 
                     send_message("step", "Request completed", metadata={"type": "complete"})
                     send_message("response", response)

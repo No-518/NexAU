@@ -27,6 +27,8 @@ from ..llm.llm_config import LLMConfig
 from ..main_sub.skill import Skill
 from ..tool import Tool
 from ..tool.builtin.skill_tool import load_skill
+from ..tracer.composite import CompositeTracer
+from ..tracer.core import BaseTracer
 from .tool_call_modes import normalize_tool_call_mode
 
 TTool = TypeVar("TTool")
@@ -91,6 +93,7 @@ class AgentConfigBase[TTool, TSkill, TSubAgent, THook](BaseModel):
     tool_call_mode: str = "openai"
     retry_attempts: int = Field(default=5, ge=0)
     timeout: int = Field(default=300, ge=1)
+    tracers: list[Any] = Field(default_factory=list)
 
 
 @dataclass
@@ -143,6 +146,8 @@ class AgentConfig(
     before_model_hooks: list[Callable] | None = None
     before_tool_hooks: list[Callable] | None = None
     middlewares: list[Any] | None = None
+    tracers: list[BaseTracer] = Field(default_factory=list)
+    resolved_tracer: BaseTracer | None = Field(default=None, exclude=True)
     sub_agent_factories: dict[str, Callable[[], Any]] = Field(
         default_factory=dict,
         exclude=True,
@@ -162,6 +167,13 @@ class AgentConfig(
     @field_validator("mcp_servers", mode="before")
     @classmethod
     def _ensure_mcp_servers(cls, value):
+        if value is None:
+            return []
+        return value
+
+    @field_validator("tracers")
+    @classmethod
+    def _ensure_tracers(cls, value):
         if value is None:
             return []
         return value
@@ -205,6 +217,16 @@ class AgentConfig(
         # Ensure name is set
         if not self.name:
             self.name = f"agent_{id(self)}"
+
+        # Resolve tracer composition
+        if any(not isinstance(tracer, BaseTracer) for tracer in self.tracers):
+            raise ValueError("All tracers must inherit from BaseTracer")
+        if len(self.tracers) == 1:
+            self.resolved_tracer = self.tracers[0]
+        elif len(self.tracers) > 1:
+            self.resolved_tracer = CompositeTracer(self.tracers)
+        else:
+            self.resolved_tracer = None
 
         return self
 

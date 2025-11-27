@@ -31,7 +31,6 @@ class CLIEnabledSubAgentManager(SubAgentManager):
         self,
         agent_name: str,
         sub_agent_factories: dict[str, Callable[[], Any]],
-        langfuse_client=None,
         global_storage=None,
         progress_hook=None,
         tool_hook=None,
@@ -40,7 +39,6 @@ class CLIEnabledSubAgentManager(SubAgentManager):
         super().__init__(
             agent_name,
             sub_agent_factories,
-            langfuse_client=langfuse_client,
             global_storage=global_storage,
         )
         self.cli_progress_hook = progress_hook
@@ -58,7 +56,6 @@ class CLIEnabledSubAgentManager(SubAgentManager):
         new_manager = cls(
             manager.agent_name,
             manager.sub_agent_factories,
-            langfuse_client=manager.langfuse_client,
             global_storage=manager.global_storage,
             progress_hook=progress_hook,
             tool_hook=tool_hook,
@@ -167,16 +164,6 @@ class CLIEnabledSubAgentManager(SubAgentManager):
                 "message": message,
             },
         )
-
-        parent_trace_id = getattr(parent_agent_state, "langfuse_trace_id", None)
-        if parent_trace_id:
-            sub_agent.langfuse_trace_id = parent_trace_id
-        if self.langfuse_client:
-            sub_agent.langfuse_client = self.langfuse_client
-            if hasattr(sub_agent, "executor") and sub_agent.executor:
-                sub_agent.executor.langfuse_client = self.langfuse_client
-                if hasattr(sub_agent.executor, "subagent_manager") and sub_agent.executor.subagent_manager:
-                    sub_agent.executor.subagent_manager.langfuse_client = self.langfuse_client
 
         try:
             effective_context = context

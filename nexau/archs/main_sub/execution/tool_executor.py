@@ -21,18 +21,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..agent_state import AgentState
 
+from nexau.archs.tracer.context import TraceContext
+from nexau.archs.tracer.core import BaseTracer, SpanType
+
 from ..utils.xml_utils import XMLParser
 from .hooks import AfterToolHookInput, BeforeToolHookInput, MiddlewareManager, ToolCallParams
 
 logger = logging.getLogger(__name__)
-
-try:
-    from langfuse import Langfuse
-
-    LANGFUSE_AVAILABLE = True
-except ImportError:
-    LANGFUSE_AVAILABLE = False
-    Langfuse = None
 
 
 class ToolExecutor:
@@ -42,7 +37,6 @@ class ToolExecutor:
         self,
         tool_registry: dict[str, Any],
         stop_tools: set[str],
-        langfuse_client=None,
         middleware_manager: MiddlewareManager | None = None,
     ):
         """Initialize tool executor.
@@ -50,12 +44,10 @@ class ToolExecutor:
         Args:
             tool_registry: Dictionary mapping tool names to tool objects
             stop_tools: Set of tool names that should trigger execution stop
-            langfuse_client: Optional Langfuse client for tracing
             middleware_manager: Optional middleware manager
         """
         self.tool_registry = tool_registry
         self.stop_tools = stop_tools
-        self.langfuse_client = langfuse_client
         self.xml_parser = XMLParser()
         self.middleware_manager = middleware_manager
 
@@ -94,6 +86,96 @@ class ToolExecutor:
             f"🔧 Executing tool '{tool_name}' for agent '{agent_state.agent_id}' with parameters: {tool_parameters}",
         )
 
+        # Get tracer from global storage
+        tracer: BaseTracer | None = agent_state.get_global_value("tracer")
+
+        if tracer:
+            return self._execute_tool_with_tracing(
+                tracer=tracer,
+                agent_state=agent_state,
+                tool=tool,
+                tool_name=tool_name,
+                tool_parameters=tool_parameters,
+                tool_call_id=tool_call_id,
+            )
+        else:
+            return self._execute_tool_inner(
+                agent_state=agent_state,
+                tool=tool,
+                tool_name=tool_name,
+                tool_parameters=tool_parameters,
+                tool_call_id=tool_call_id,
+            )
+
+    def _execute_tool_with_tracing(
+        self,
+        tracer: BaseTracer,
+        agent_state: "AgentState",
+        tool: Any,
+        tool_name: str,
+        tool_parameters: dict[str, Any],
+        tool_call_id: str,
+    ) -> dict[str, Any]:
+        """Execute tool with tracing enabled.
+
+        Args:
+            tracer: The tracer instance
+            agent_state: Agent state instance
+            tool: The tool object to execute
+            tool_name: Name of the tool
+            tool_parameters: Parameters for the tool
+            tool_call_id: Unique ID for this tool call
+
+        Returns:
+            Tool execution result
+        """
+        span_name = f"Tool: {tool_name}"
+        inputs = {
+            "parameters": tool_parameters,
+            "tool_call_id": tool_call_id,
+        }
+        attributes = {
+            "agent_name": agent_state.agent_name,
+            "agent_id": agent_state.agent_id,
+        }
+
+        trace_ctx = TraceContext(tracer, span_name, SpanType.TOOL, inputs, attributes)
+        with trace_ctx:
+            try:
+                result = self._execute_tool_inner(
+                    agent_state=agent_state,
+                    tool=tool,
+                    tool_name=tool_name,
+                    tool_parameters=tool_parameters,
+                    tool_call_id=tool_call_id,
+                )
+                trace_ctx.set_outputs({"result": result})
+                return result
+            except Exception as e:
+                logger.error(f"❌ Tool '{tool_name}' execution failed: {e}")
+                trace_ctx.set_outputs({"result": {"status": "error", "error": str(e), "error_type": type(e).__name__}})
+                raise
+
+    def _execute_tool_inner(
+        self,
+        agent_state: "AgentState",
+        tool: Any,
+        tool_name: str,
+        tool_parameters: dict[str, Any],
+        tool_call_id: str,
+    ) -> dict[str, Any]:
+        """Inner tool execution logic without tracing wrapper.
+
+        Args:
+            agent_state: Agent state instance
+            tool: The tool object to execute
+            tool_name: Name of the tool
+            tool_parameters: Parameters for the tool
+            tool_call_id: Unique ID for this tool call
+
+        Returns:
+            Tool execution result
+        """
         execution_params = tool_parameters.copy()
         execution_params["agent_state"] = agent_state
 
@@ -107,26 +189,7 @@ class ToolExecutor:
 
         def _execute_tool_call(params: ToolCallParams) -> dict[str, Any]:
             exec_params = params.execution_params
-            tool_input = params.parameters
 
-            if self.langfuse_client:
-                try:
-                    with self.langfuse_client.start_as_current_generation(
-                        name=f"tool_{params.tool_name}",
-                        input=tool_input,
-                        metadata={
-                            "tool_name": params.tool_name,
-                            "type": "tool_execution",
-                        },
-                    ):
-                        tool_result = tool.execute(**exec_params)
-                        self.langfuse_client.update_current_generation(output=tool_result)
-                    self.langfuse_client.flush()
-                    return tool_result
-                except Exception as langfuse_error:
-                    logger.warning(
-                        f"⚠️ Langfuse tool tracing failed: {langfuse_error}",
-                    )
             return tool.execute(**exec_params)
 
         execution_error = None

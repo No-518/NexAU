@@ -18,7 +18,6 @@ Unit tests for ToolExecutor class.
 Tests cover:
 - Initialization with various configurations
 - Tool execution (success and failure cases)
-- Langfuse tracing integration
 - Tool hooks execution
 - Stop tool handling
 - Parameter type conversion for all schema types
@@ -26,7 +25,7 @@ Tests cover:
 """
 
 import logging
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -55,23 +54,8 @@ class TestToolExecutorInitialization:
 
         assert executor.tool_registry == tool_registry
         assert executor.stop_tools == stop_tools
-        assert executor.langfuse_client is None
         assert executor.middleware_manager is None
         assert executor.xml_parser is not None
-
-    def test_init_with_langfuse(self):
-        """Test initialization with Langfuse client."""
-        mock_langfuse = Mock()
-        tool_registry = {}
-        stop_tools = set()
-
-        executor = ToolExecutor(
-            tool_registry=tool_registry,
-            stop_tools=stop_tools,
-            langfuse_client=mock_langfuse,
-        )
-
-        assert executor.langfuse_client == mock_langfuse
 
     def test_init_with_hook_manager(self):
         """Test initialization with tool hook manager."""
@@ -91,19 +75,16 @@ class TestToolExecutorInitialization:
         """Test initialization with all optional parameters."""
         tool_registry = {"tool1": Mock()}
         stop_tools = {"stop_tool"}
-        mock_langfuse = Mock()
         mock_hook_manager = MiddlewareManager()
 
         executor = ToolExecutor(
             tool_registry=tool_registry,
             stop_tools=stop_tools,
-            langfuse_client=mock_langfuse,
             middleware_manager=mock_hook_manager,
         )
 
         assert executor.tool_registry == tool_registry
         assert executor.stop_tools == stop_tools
-        assert executor.langfuse_client == mock_langfuse
         assert executor.middleware_manager == mock_hook_manager
 
 
@@ -216,80 +197,6 @@ class TestToolExecutorExecution:
         )
 
         assert received_state is agent_state
-        assert result["result"] == 10
-
-
-class TestToolExecutorLangfuseTracing:
-    """Test Langfuse tracing integration."""
-
-    def test_execute_tool_with_langfuse_tracing(self, agent_state):
-        """Test tool execution with Langfuse tracing."""
-
-        def simple_tool(x: int, agent_state=None) -> dict:
-            return {"result": x * 2}
-
-        tool = Tool(
-            name="simple_tool",
-            description="A simple tool",
-            input_schema={"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]},
-            implementation=simple_tool,
-        )
-
-        mock_langfuse = Mock()
-        mock_context = MagicMock()
-        mock_langfuse.start_as_current_generation.return_value.__enter__ = Mock(return_value=mock_context)
-        mock_langfuse.start_as_current_generation.return_value.__exit__ = Mock(return_value=None)
-
-        executor = ToolExecutor(
-            tool_registry={"simple_tool": tool},
-            stop_tools=set(),
-            langfuse_client=mock_langfuse,
-        )
-
-        result = executor.execute_tool(
-            agent_state=agent_state,
-            tool_name="simple_tool",
-            parameters={"x": 5},
-            tool_call_id="call_123",
-        )
-
-        assert result["result"] == 10
-        # Verify Langfuse calls
-        mock_langfuse.start_as_current_generation.assert_called_once()
-        mock_langfuse.update_current_generation.assert_called_once_with(output=result)
-        mock_langfuse.flush.assert_called_once()
-
-    def test_execute_tool_langfuse_error_fallback(self, agent_state):
-        """Test that tool execution continues if Langfuse fails."""
-
-        def simple_tool(x: int, agent_state=None) -> dict:
-            return {"result": x * 2}
-
-        tool = Tool(
-            name="simple_tool",
-            description="A simple tool",
-            input_schema={"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]},
-            implementation=simple_tool,
-        )
-
-        mock_langfuse = Mock()
-        # Make Langfuse raise an error
-        mock_langfuse.start_as_current_generation.side_effect = Exception("Langfuse error")
-
-        executor = ToolExecutor(
-            tool_registry={"simple_tool": tool},
-            stop_tools=set(),
-            langfuse_client=mock_langfuse,
-        )
-
-        # Should still execute successfully despite Langfuse error
-        result = executor.execute_tool(
-            agent_state=agent_state,
-            tool_name="simple_tool",
-            parameters={"x": 5},
-            tool_call_id="call_123",
-        )
-
         assert result["result"] == 10
 
 
@@ -974,7 +881,7 @@ class TestToolExecutorIntegration:
     """Integration tests with multiple components."""
 
     def test_execute_tool_with_all_features(self, agent_state):
-        """Test tool execution with Langfuse, hooks, and stop tool combined."""
+        """Test tool execution with hooks, and stop tool combined."""
 
         def stop_tool(x: int, agent_state=None) -> dict:
             return {"result": x * 2}
@@ -986,11 +893,6 @@ class TestToolExecutorIntegration:
             implementation=stop_tool,
         )
 
-        mock_langfuse = Mock()
-        mock_context = MagicMock()
-        mock_langfuse.start_as_current_generation.return_value.__enter__ = Mock(return_value=mock_context)
-        mock_langfuse.start_as_current_generation.return_value.__exit__ = Mock(return_value=None)
-
         hook = Mock(
             return_value=HookResult.with_modifications(
                 tool_output={"result": 10, "_is_stop_tool": True, "hooked": True},
@@ -1001,7 +903,6 @@ class TestToolExecutorIntegration:
         executor = ToolExecutor(
             tool_registry={"stop_tool": tool},
             stop_tools={"stop_tool"},
-            langfuse_client=mock_langfuse,
             middleware_manager=middleware_manager,
         )
 
@@ -1015,5 +916,4 @@ class TestToolExecutorIntegration:
         # Verify all features worked
         assert result["_is_stop_tool"] is True
         assert result["hooked"] is True
-        mock_langfuse.flush.assert_called_once()
         hook.assert_called_once()

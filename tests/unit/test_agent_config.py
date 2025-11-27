@@ -24,6 +24,28 @@ from nexau.archs.llm.llm_config import LLMConfig
 from nexau.archs.main_sub.config import AgentConfig, ExecutionConfig
 from nexau.archs.main_sub.skill import Skill
 from nexau.archs.tool.tool import Tool
+from nexau.archs.tracer.composite import CompositeTracer
+from nexau.archs.tracer.core import BaseTracer, Span, SpanType
+
+
+class DummyTracer(BaseTracer):
+    """Minimal tracer implementation for tests."""
+
+    def start_span(
+        self,
+        name: str,
+        span_type: SpanType,
+        inputs: dict | None = None,
+        parent_span: Span | None = None,
+        attributes: dict | None = None,
+    ) -> Span:
+        return Span(id="dummy", name=name, type=span_type)
+
+    def end_span(self, span: Span, outputs=None, error=None, attributes=None) -> None:
+        return None
+
+    def add_event(self, span: Span, event_name: str, attributes: dict | None = None) -> None:
+        return None
 
 
 class TestExecutionConfig:
@@ -50,11 +72,11 @@ class TestExecutionConfig:
         assert config.timeout == 180
         assert config.tool_call_mode == "openai"
 
-    def test_execution_config_supports_anthorpic_mode(self):
-        """ExecutionConfig should normalize Anthorpic mode."""
-        config = ExecutionConfig(tool_call_mode="ANTHORPIC")
+    def test_execution_config_supports_anthropic_mode(self):
+        """ExecutionConfig should normalize anthropic mode."""
+        config = ExecutionConfig(tool_call_mode="anthropic")
 
-        assert config.tool_call_mode == "anthorpic"
+        assert config.tool_call_mode == "anthropic"
 
     def test_execution_config_invalid_tool_call_mode(self):
         """Invalid tool_call_mode values should raise ValueError."""
@@ -168,6 +190,30 @@ class TestAgentConfigSkills:
         # Should NOT have added skill_tool
         assert len(config.tools) == 0
         assert len(config.skills) == 0
+
+
+class TestAgentConfigTracing:
+    """Tests for tracer aggregation on AgentConfig."""
+
+    def test_agent_config_single_tracer(self):
+        tracer = DummyTracer()
+        config = AgentConfig(name="test_agent", llm_config={"model": "gpt-4o-mini"}, tracers=[tracer])
+
+        assert config.tracers == [tracer]
+        assert config.resolved_tracer is tracer
+
+    def test_agent_config_composes_multiple_tracers(self):
+        tracer1 = DummyTracer()
+        tracer2 = DummyTracer()
+
+        config = AgentConfig(name="test_agent", llm_config={"model": "gpt-4o-mini"}, tracers=[tracer1, tracer2])
+
+        assert isinstance(config.resolved_tracer, CompositeTracer)
+        assert config.resolved_tracer.tracers == [tracer1, tracer2]
+
+    def test_agent_config_rejects_invalid_tracer_entries(self):
+        with pytest.raises(ValueError):
+            AgentConfig(name="test_agent", llm_config={"model": "gpt-4o-mini"}, tracers=["not-a-tracer"])
 
 
 class TestGenerateSkillDescription:

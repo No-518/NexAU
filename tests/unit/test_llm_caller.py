@@ -47,29 +47,6 @@ def mock_openai_module():
         yield mock_openai
 
 
-@pytest.fixture(autouse=True)
-def mock_langfuse_module():
-    """Mock langfuse functions to prevent any real connections to Langfuse server."""
-    with (
-        patch("nexau.archs.main_sub.execution.llm_caller.get_client") as mock_get_client,
-        patch("nexau.archs.main_sub.execution.llm_caller.observe") as mock_observe,
-    ):
-        # Mock get_client to return a mock client
-        mock_langfuse_client = Mock()
-        mock_get_client.return_value = mock_langfuse_client
-
-        # Mock observe decorator to pass through the original function
-        def mock_observe_decorator(*args, **kwargs):
-            def decorator(func):
-                return func
-
-            return decorator
-
-        mock_observe.side_effect = mock_observe_decorator
-
-        yield {"get_client": mock_get_client, "observe": mock_observe, "client": mock_langfuse_client}
-
-
 class TestLLMCallerInitialization:
     """Test cases for LLMCaller initialization."""
 
@@ -498,13 +475,13 @@ class TestLLMCallerBasicCalls:
         assert "tool_choice" in call_args[1]
         assert "stop" not in call_args[1] or "</tool_use>" not in call_args[1].get("stop", [])
 
-    def test_call_llm_anthorpic_mode_not_supported(
+    def test_call_llm_anthropic_mode_not_supported(
         self,
         mock_openai_client,
         mock_llm_config,
         agent_state,
     ):
-        """Anthorpic mode should clearly signal lack of support."""
+        """anthropic mode should clearly signal lack of support."""
 
         caller = LLMCaller(
             openai_client=mock_openai_client,
@@ -520,17 +497,17 @@ class TestLLMCallerBasicCalls:
         mock_response.choices[0].message.tool_calls = []
         mock_openai_client.chat.completions.create.return_value = mock_response
 
-        # Anthorpic mode sets tools and tool_choice but may not be fully supported
+        # anthropic mode sets tools and tool_choice but may not be fully supported
         # The test verifies it doesn't crash with proper mocking
         response = caller.call_llm(
             messages,
             max_tokens=50,
             force_stop_reason=AgentStopReason.SUCCESS,
             agent_state=agent_state,
-            tool_call_mode="anthorpic",
+            tool_call_mode="anthropic",
         )
 
-        # Verify the call completed (though anthorpic mode may not be fully functional)
+        # Verify the call completed (though anthropic mode may not be fully functional)
         assert response is not None
         assert isinstance(response, ModelResponse)
 

@@ -24,14 +24,6 @@ from nexau.archs.main_sub.utils.xml_utils import XMLParser
 
 logger = logging.getLogger(__name__)
 
-try:
-    from langfuse import Langfuse
-
-    _langfuse_available = True
-except ImportError:
-    _langfuse_available = False
-    Langfuse = None
-
 
 class SubAgentManager:
     """Manages sub-agent lifecycle and delegation."""
@@ -40,7 +32,6 @@ class SubAgentManager:
         self,
         agent_name: str,
         sub_agent_factories: dict[str, Callable[[], Any]],
-        langfuse_client=None,
         global_storage=None,
     ):
         """Initialize sub-agent manager.
@@ -48,14 +39,12 @@ class SubAgentManager:
         Args:
             agent_name: Name of the parent agent
             sub_agent_factories: Dictionary mapping sub-agent names to factory functions
-            langfuse_client: Optional Langfuse client for tracing
             global_storage: Optional global storage to share with sub-agents
         """
         from nexau.archs.main_sub.agent import Agent
 
         self.agent_name = agent_name
         self.sub_agent_factories = sub_agent_factories
-        self.langfuse_client = langfuse_client
         self.global_storage = global_storage
         self.xml_parser = XMLParser()
         self._shutdown_event = threading.Event()
@@ -125,17 +114,6 @@ class SubAgentManager:
         else:
             sub_agent = sub_agent_factory()
         self.running_sub_agents[sub_agent.config.agent_id] = sub_agent
-
-        parent_trace_id = getattr(parent_agent_state, "langfuse_trace_id", None)
-        if parent_trace_id:
-            sub_agent.langfuse_trace_id = parent_trace_id
-        # Ensure sub-agents reuse the parent's Langfuse client and trace when available
-        if self.langfuse_client:
-            sub_agent.langfuse_client = self.langfuse_client
-            if hasattr(sub_agent, "executor") and sub_agent.executor:
-                sub_agent.executor.langfuse_client = self.langfuse_client
-                if hasattr(sub_agent.executor, "subagent_manager") and sub_agent.executor.subagent_manager:
-                    sub_agent.executor.subagent_manager.langfuse_client = self.langfuse_client
 
         try:
             effective_context = None

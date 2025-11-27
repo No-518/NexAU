@@ -129,6 +129,13 @@ uv sync
         Skill.from_folder(base_dir / "skills/theme-factory"),
         Skill.from_folder(base_dir / "skills/algorithmic-art"),
     ]
+    
+    # Tracer allows you to forward execution data for observability.
+    tracer = LangfuseTracer(
+        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+        host=os.getenv("LANGFUSE_HOST"),
+    )
 
     agent_config = AgentConfig(
         name="nexau_code_agent",
@@ -153,6 +160,7 @@ uv sync
                 log_model_calls=True,
             ),
         ],
+        tracers=[tracer]
     )
 
     agent = Agent(config = agent_config)

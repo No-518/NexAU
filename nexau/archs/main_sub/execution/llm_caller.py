@@ -20,9 +20,10 @@ import time
 from typing import Any
 
 import openai
-from langfuse import get_client, observe
 
 from nexau.archs.llm.llm_config import LLMConfig
+from nexau.archs.tracer.context import TraceContext, get_current_span
+from nexau.archs.tracer.core import BaseTracer, SpanType
 
 from ..agent_state import AgentState
 from ..tool_call_modes import STRUCTURED_TOOL_CALL_MODES, normalize_tool_call_mode
@@ -42,6 +43,7 @@ class LLMCaller:
         llm_config: Any,
         retry_attempts: int = 5,
         middleware_manager: MiddlewareManager | None = None,
+        global_storage: Any = None,
     ):
         """Initialize LLM caller.
 
@@ -50,11 +52,19 @@ class LLMCaller:
             llm_config: LLM configuration
             retry_attempts: Number of retry attempts for API calls
             middleware_manager: Optional middleware manager for wrapping calls
+            global_storage: Optional global storage to retrieve tracer at call time
         """
         self.openai_client = openai_client
         self.llm_config = llm_config
         self.retry_attempts = retry_attempts
         self.middleware_manager = middleware_manager
+        self.global_storage = global_storage
+
+    def _get_tracer(self) -> BaseTracer | None:
+        """Get tracer from global storage at call time."""
+        if self.global_storage is not None:
+            return self.global_storage.get("tracer")
+        return None
 
     def call_llm(
         self,
@@ -70,7 +80,7 @@ class LLMCaller:
         Args:
             messages: List of conversation messages
             max_tokens: Maximum tokens for the response
-            tool_call_mode: Tool calling strategy ('xml', 'openai', or 'anthorpic')
+            tool_call_mode: Tool calling strategy ('xml', 'openai', or 'anthropic')
             tools: Optional structured tool definitions for the selected mode
 
         Returns:
@@ -94,7 +104,7 @@ class LLMCaller:
         if max_tokens is not None:
             api_params["max_tokens"] = max_tokens
 
-        if normalized_mode == "anthorpic":
+        if normalized_mode == "anthropic":
             api_params["tools"] = tools
             api_params.setdefault("tool_choice", {"type": "auto"})
 
@@ -199,6 +209,7 @@ class LLMCaller:
                     kwargs,
                     middleware_manager=self.middleware_manager,
                     model_call_params=params,
+                    tracer=self._get_tracer(),
                 )
 
                 stop = kwargs.get("stop", [])
@@ -230,6 +241,7 @@ def call_llm_with_different_client(
     *,
     middleware_manager: MiddlewareManager | None = None,
     model_call_params: ModelCallParams | None = None,
+    tracer: BaseTracer | None = None,
 ) -> ModelResponse:
     """Call LLM with the given messages and return response content."""
     if llm_config.api_type == "anthropic_chat_completion":
@@ -238,6 +250,7 @@ def call_llm_with_different_client(
             kwargs,
             middleware_manager=middleware_manager,
             model_call_params=model_call_params,
+            tracer=tracer,
         )
     elif llm_config.api_type == "openai_responses":
         return call_llm_with_openai_responses(
@@ -246,6 +259,7 @@ def call_llm_with_different_client(
             middleware_manager=middleware_manager,
             model_call_params=model_call_params,
             llm_config=llm_config,
+            tracer=tracer,
         )
     elif llm_config.api_type == "openai_chat_completion":
         return call_llm_with_openai_chat_completion(
@@ -254,6 +268,7 @@ def call_llm_with_different_client(
             middleware_manager=middleware_manager,
             model_call_params=model_call_params,
             llm_config=llm_config,
+            tracer=tracer,
         )
     else:
         raise ValueError(f"Invalid API type: {llm_config.api_type}")
@@ -324,12 +339,15 @@ def call_llm_with_anthropic_chat_completion(
     *,
     middleware_manager: MiddlewareManager | None = None,
     model_call_params: ModelCallParams | None = None,
+    tracer: BaseTracer | None = None,
 ) -> ModelResponse:
     """Call Anthropic chat completion with the given messages and return response content."""
     messages = _strip_responses_api_artifacts(kwargs.get("messages", []))
     stream_requested = bool(kwargs.pop("stream", False))
 
-    @observe(name="anthropic_run", as_type="generation")
+    # Check if tracing is active (there's a current span and we have a tracer)
+    should_trace = tracer is not None and get_current_span() is not None
+
     def llm_call(messages: list[dict[str, Any]]):
         # 组装 Anthropic 参数
         system_messages, user_messages = openai_to_anthropic_message(messages)
@@ -346,41 +364,23 @@ def call_llm_with_anthropic_chat_completion(
         new_kwargs.pop("messages", None)
         new_kwargs.pop("anthropic_cache_control_ttl", None)
 
-        # 调用 Anthropic
-        resp = client.messages.create(system=system_messages, messages=user_messages, **new_kwargs)
+        # Build the exact kwargs for tracing
+        api_kwargs = {"system": system_messages, "messages": user_messages, **new_kwargs}
 
-        # 获取 usage 详情
-        usage_details = None
-        if getattr(resp, "usage", None):
-            cache_creation_input_tokens = getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
-            cache_read_input_tokens = getattr(resp.usage, "cache_read_input_tokens", 0) or 0
-            input_tokens = getattr(resp.usage, "input_tokens", 0) or 0
-            output_tokens = getattr(resp.usage, "output_tokens", 0) or 0
-            total_output_tokens = output_tokens
-            usage_details = {
-                "input_tokens": input_tokens,
-                "output_tokens": total_output_tokens,
-                "cache_creation_input_tokens": cache_creation_input_tokens,
-                "cache_read_input_tokens": cache_read_input_tokens,
-            }
-
-        model_name = new_kwargs.get("model") or getattr(resp, "model", None)
-
-        # 更新当前 generation（让前端显示成 LLM 卡片）
-        langfuse_client = get_client()
-        langfuse_client.update_current_generation(
-            model=model_name,
-            input=messages,
-            usage_details=usage_details,
-            metadata={"provider": "anthropic", "api": "messages.create"},
-        )
-        return resp
+        if should_trace and tracer is not None:
+            trace_ctx = TraceContext(tracer, "Anthropic messages.create", SpanType.LLM, inputs=api_kwargs)
+            with trace_ctx:
+                resp = client.messages.create(**api_kwargs)
+                trace_ctx.set_outputs(_to_serializable_dict(resp))
+                return resp
+        else:
+            resp = client.messages.create(**api_kwargs)
+            return resp
 
     if not stream_requested:
         response = llm_call(messages)
         return ModelResponse.from_anthropic_message(response)
 
-    @observe(name="anthropic_run_stream", as_type="generation")
     def llm_stream_call(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], str | None]:
         system_messages, user_messages = openai_to_anthropic_message(messages)
         if user_messages and user_messages[-1].get("content"):
@@ -395,24 +395,35 @@ def call_llm_with_anthropic_chat_completion(
         new_kwargs.pop("messages", None)
         new_kwargs.pop("anthropic_cache_control_ttl", None)
 
-        aggregator = AnthropicStreamAggregator()
-        with client.messages.stream(system=system_messages, messages=user_messages, **new_kwargs) as stream:
-            for event in stream:
-                processed_event = _process_stream_chunk(event, middleware_manager, model_call_params)
-                if processed_event is None:
-                    continue
-                aggregator.consume(processed_event)
-        message_payload = aggregator.finalize()
-        return message_payload, aggregator.model_name
+        # Build the exact kwargs for tracing
+        api_kwargs = {"system": system_messages, "messages": user_messages, **new_kwargs}
 
-    response_payload, agg_model = llm_stream_call(messages)
-    langfuse_client = get_client()
-    langfuse_client.update_current_generation(
-        model=agg_model or kwargs.get("model"),
-        input=messages,
-        usage_details=None,
-        metadata={"provider": "anthropic", "api": "messages.stream"},
-    )
+        aggregator = AnthropicStreamAggregator()
+
+        if should_trace and tracer is not None:
+            trace_ctx = TraceContext(tracer, "Anthropic messages.stream", SpanType.LLM, inputs=api_kwargs)
+            with trace_ctx:
+                with client.messages.stream(**api_kwargs) as stream:
+                    for event in stream:
+                        processed_event = _process_stream_chunk(event, middleware_manager, model_call_params)
+                        if processed_event is None:
+                            continue
+                        aggregator.consume(processed_event)
+                message_payload = aggregator.finalize()
+                trace_ctx.set_outputs(message_payload)
+                return message_payload, aggregator.model_name
+        else:
+            with client.messages.stream(**api_kwargs) as stream:
+                for event in stream:
+                    processed_event = _process_stream_chunk(event, middleware_manager, model_call_params)
+                    if processed_event is None:
+                        continue
+                    aggregator.consume(processed_event)
+            message_payload = aggregator.finalize()
+            return message_payload, aggregator.model_name
+
+    response_payload, _ = llm_stream_call(messages)
+
     return ModelResponse.from_anthropic_message(response_payload)
 
 
@@ -423,6 +434,7 @@ def call_llm_with_openai_chat_completion(
     middleware_manager: MiddlewareManager | None = None,
     model_call_params: ModelCallParams | None = None,
     llm_config: LLMConfig | None = None,
+    tracer: BaseTracer | None = None,
 ) -> ModelResponse:
     """Call OpenAI chat completion with the given messages and return response content."""
 
@@ -430,36 +442,58 @@ def call_llm_with_openai_chat_completion(
     kwargs["messages"] = messages
     stream_requested = bool(kwargs.pop("stream", False) or getattr(llm_config, "stream", False))
 
+    # Check if tracing is active (there's a current span and we have a tracer)
+    should_trace = tracer is not None and get_current_span() is not None
+
     if stream_requested:
 
-        @observe(name="OpenAI-Chat Completion (stream)", as_type="generation")
-        def call_llm(payload: dict[str, Any]) -> tuple[dict[str, Any], Any | None, str | None]:
+        def call_llm_stream(payload: dict[str, Any]) -> tuple[dict[str, Any], Any | None, str | None]:
             payload = payload.copy()
             payload["stream"] = True
+            payload["stream_options"] = {
+                "include_usage": True,
+            }
             aggregator = OpenAIChatStreamAggregator()
             last_chunk: Any | None = None
-            with client.chat.completions.create(**payload) as stream:
-                for chunk in stream:
-                    last_chunk = chunk
-                    processed_chunk = _process_stream_chunk(chunk, middleware_manager, model_call_params)
-                    if processed_chunk is None:
-                        continue
-                    aggregator.consume(processed_chunk)
-            message_payload = aggregator.finalize()
-            return message_payload, last_chunk, aggregator.model_name
 
-        message, last_chunk, agg_model = call_llm(kwargs)
-        langfuse_client = get_client()
-        model_name = agg_model or (message.get("model") if isinstance(message, dict) else None) or getattr(last_chunk, "model", None)
-        langfuse_client.update_current_generation(model=model_name, usage_details=getattr(last_chunk, "usage", None))
+            if should_trace and tracer is not None:
+                trace_ctx = TraceContext(tracer, "OpenAI chat.completions.create (stream)", SpanType.LLM, inputs=payload)
+                with trace_ctx:
+                    with client.chat.completions.create(**payload) as stream:
+                        for chunk in stream:
+                            last_chunk = chunk
+                            processed_chunk = _process_stream_chunk(chunk, middleware_manager, model_call_params)
+                            if processed_chunk is None:
+                                continue
+                            aggregator.consume(processed_chunk)
+                    message_payload = aggregator.finalize()
+                    trace_ctx.set_outputs(message_payload)
+                    return message_payload, last_chunk, aggregator.model_name
+            else:
+                with client.chat.completions.create(**payload) as stream:
+                    for chunk in stream:
+                        last_chunk = chunk
+                        processed_chunk = _process_stream_chunk(chunk, middleware_manager, model_call_params)
+                        if processed_chunk is None:
+                            continue
+                        aggregator.consume(processed_chunk)
+                message_payload = aggregator.finalize()
+                return message_payload, last_chunk, aggregator.model_name
+
+        message, _, _ = call_llm_stream(kwargs)
+
         return ModelResponse.from_openai_message(message)
 
-    @observe(name="OpenAI-Chat Completion", as_type="generation")
-    def call_llm(kwargs):
-        response = client.chat.completions.create(**kwargs)
-        langfuse_client = get_client()
-        langfuse_client.update_current_generation(model=response.model, usage_details=response.usage)
-        return response
+    def call_llm(api_kwargs: dict[str, Any]):
+        if should_trace and tracer is not None:
+            trace_ctx = TraceContext(tracer, "OpenAI chat.completions.create", SpanType.LLM, inputs=api_kwargs)
+            with trace_ctx:
+                response = client.chat.completions.create(**api_kwargs)
+                trace_ctx.set_outputs(_to_serializable_dict(response))
+                return response
+        else:
+            response = client.chat.completions.create(**api_kwargs)
+            return response
 
     response = call_llm(kwargs)
     message = response.choices[0].message
@@ -473,6 +507,7 @@ def call_llm_with_openai_responses(
     middleware_manager: MiddlewareManager | None = None,
     model_call_params: ModelCallParams | None = None,
     llm_config: LLMConfig | None = None,
+    tracer: BaseTracer | None = None,
 ) -> ModelResponse:
     """Call OpenAI Responses API and normalize the outcome."""
 
@@ -504,34 +539,48 @@ def call_llm_with_openai_responses(
 
     request_payload.pop("store", None)
 
-    @observe(name="OpenAI-Responses API", as_type="generation")
-    def call_llm(request_payload):
-        response = client.responses.create(**request_payload)
-        langfuse_client = get_client()
-        langfuse_client.update_current_generation(model=response.model, usage_details=response.usage)
-        return response
+    # Check if tracing is active (there's a current span and we have a tracer)
+    should_trace = tracer is not None and get_current_span() is not None
+
+    def call_llm(api_payload: dict[str, Any]):
+        if should_trace and tracer is not None:
+            trace_ctx = TraceContext(tracer, "OpenAI responses.create", SpanType.LLM, inputs=api_payload)
+            with trace_ctx:
+                response = client.responses.create(**api_payload)
+                trace_ctx.set_outputs(_to_serializable_dict(response))
+                return response
+        else:
+            response = client.responses.create(**api_payload)
+            return response
 
     if not stream_requested:
         return ModelResponse.from_openai_response(call_llm(request_payload))
 
-    @observe(name="OpenAI-Responses API (stream)", as_type="generation")
     def call_llm_stream(payload: dict[str, Any]) -> dict[str, Any]:
         aggregator = OpenAIResponsesStreamAggregator()
-        with client.responses.stream(**payload) as stream:
-            for event in stream:
-                processed_event = _process_stream_chunk(event, middleware_manager, model_call_params)
-                if processed_event is None:
-                    continue
-                aggregator.consume(processed_event)
-        return aggregator.finalize()
+
+        if should_trace and tracer is not None:
+            trace_ctx = TraceContext(tracer, "OpenAI responses.stream", SpanType.LLM, inputs=payload)
+            with trace_ctx:
+                with client.responses.stream(**payload) as stream:
+                    for event in stream:
+                        processed_event = _process_stream_chunk(event, middleware_manager, model_call_params)
+                        if processed_event is None:
+                            continue
+                        aggregator.consume(processed_event)
+                response_payload = aggregator.finalize()
+                trace_ctx.set_outputs(response_payload)
+                return response_payload
+        else:
+            with client.responses.stream(**payload) as stream:
+                for event in stream:
+                    processed_event = _process_stream_chunk(event, middleware_manager, model_call_params)
+                    if processed_event is None:
+                        continue
+                    aggregator.consume(processed_event)
+            return aggregator.finalize()
 
     response_payload = call_llm_stream(request_payload)
-    langfuse_client = get_client()
-    langfuse_client.update_current_generation(
-        model=response_payload.get("model"),
-        usage_details=response_payload.get("usage"),
-        metadata={"provider": "openai", "api": "responses.stream"},
-    )
     return ModelResponse.from_openai_response(response_payload)
 
 
@@ -818,12 +867,17 @@ class OpenAIChatStreamAggregator:
         self._reasoning_parts: list[str] = []
         self.role: str = "assistant"
         self.model_name: str | None = None
+        self.usage: Any | None = None
 
     def consume(self, chunk: Any) -> None:
         payload = _to_serializable_dict(chunk)
         model = payload.get("model")
         if isinstance(model, str):
             self.model_name = model
+
+        usage_payload = payload.get("usage")
+        if usage_payload is not None:
+            self.usage = _to_serializable_dict(usage_payload)
 
         choices = payload.get("choices") or []
         for choice in choices:
@@ -911,6 +965,9 @@ class OpenAIChatStreamAggregator:
 
         if self.model_name:
             message["model"] = self.model_name
+
+        if self.usage is not None:
+            message["usage"] = self.usage
 
         return message
 

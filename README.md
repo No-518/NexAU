@@ -90,7 +90,7 @@ uv sync
 
     from nexau import Agent, AgentConfig, LLMConfig, Skill, Tool
     from nexau.archs.main_sub.execution.hooks import LoggingMiddleware
-
+    from nexau.archs.tracer.adapters.langfuse import LangfuseTracer
     from nexau.archs.tool.builtin import (
         bash_tool,
         file_edit_tool,
@@ -130,6 +130,13 @@ uv sync
         Skill.from_folder(base_dir / "skills/algorithmic-art"),
     ]
 
+    # Tracer allows you to forward execution data for observability.
+    tracer = LangfuseTracer(
+        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+        host=os.getenv("LANGFUSE_HOST"),
+    )
+
     agent_config = AgentConfig(
         name="nexau_code_agent",
         max_context_tokens=100000,
@@ -153,6 +160,7 @@ uv sync
                 log_model_calls=True,
             ),
         ],
+        tracers=[tracer],
     )
 
     agent = Agent(config = agent_config)

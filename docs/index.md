@@ -25,7 +25,7 @@ NexAU is a general-purpose agent framework for building intelligent agents with 
     * **[Hooks/Middleware](./advanced-guides/hooks.md)**: Intercept and modify agent behavior.
     * **[Global Storage](./advanced-guides/global-storage.md)**: Share state across tools and agents.
     * **[Templating](./advanced-guides/templating.md)**: Use Jinja2 for dynamic system prompts.
-    * **[Tracing](./advanced-guides/tracing.md)**: Dump execution traces to a file.
+    * **[Tracer Integration](./advanced-guides/tracer.md)**: Configure and share tracers across agents.
     * **[MCP Integration](./advanced-guides/mcp.md)**: Connect to external services via MCP.
 
 ## Todos

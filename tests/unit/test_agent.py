@@ -24,16 +24,8 @@ from nexau.archs.llm.llm_config import LLMConfig
 from nexau.archs.main_sub.agent import Agent, create_agent
 from nexau.archs.main_sub.agent_context import AgentContext, GlobalStorage
 from nexau.archs.main_sub.agent_state import AgentState
-from nexau.archs.main_sub.config import ExecutionConfig
-
-
-@pytest.fixture(autouse=True)
-def mock_langfuse_client():
-    """Mock Langfuse client to prevent any real connections to Langfuse server."""
-    with patch("nexau.archs.main_sub.agent.Langfuse") as mock_langfuse_class:
-        mock_langfuse = Mock()
-        mock_langfuse_class.return_value = mock_langfuse
-        yield mock_langfuse
+from nexau.archs.main_sub.config import AgentConfig, ExecutionConfig
+from nexau.archs.tracer.core import BaseTracer
 
 
 class TestAgent:
@@ -70,39 +62,6 @@ class TestAgent:
             agent = Agent(agent_config, global_storage)
 
             assert agent.openai_client is None
-
-    @patch("nexau.archs.main_sub.agent.Langfuse")
-    def test_agent_initialization_with_langfuse(self, mock_langfuse_class, agent_config, global_storage):
-        """Test agent initialization with Langfuse tracing."""
-        mock_langfuse = Mock()
-        mock_langfuse_class.return_value = mock_langfuse
-
-        with patch.dict(
-            "os.environ",
-            {
-                "LANGFUSE_PUBLIC_KEY": "test-key",
-                "LANGFUSE_SECRET_KEY": "test-secret",
-            },
-        ):
-            with patch("nexau.archs.main_sub.agent.openai") as mock_openai:
-                mock_openai.OpenAI.return_value = Mock()
-
-                agent = Agent(agent_config, global_storage)
-
-                assert agent.langfuse_client == mock_langfuse
-
-    @patch("nexau.archs.main_sub.agent.Langfuse")
-    def test_agent_initialization_langfuse_missing_env(self, mock_langfuse_class, agent_config, global_storage):
-        """Test agent initialization when Langfuse env vars are missing."""
-        mock_langfuse_class.return_value = Mock()
-
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("nexau.archs.main_sub.agent.openai") as mock_openai:
-                mock_openai.OpenAI.return_value = Mock()
-
-                agent = Agent(agent_config, global_storage)
-
-                assert agent.langfuse_client is None
 
     def test_add_tool(self, agent_config, global_storage, sample_tool):
         """Test adding tools to agent."""
@@ -154,6 +113,20 @@ class TestAgent:
                 agent.stop()
 
                 mock_cleanup.assert_called_once()
+
+    def test_agent_injects_tracer_into_global_storage(self, agent_config, global_storage):
+        """Tracer set on config should be visible via shared global storage."""
+        with patch("nexau.archs.main_sub.agent.openai") as mock_openai:
+            mock_openai.OpenAI.return_value = Mock()
+
+            tracer = Mock(spec=BaseTracer)
+            agent_payload = agent_config.model_dump()
+            agent_payload["tracers"] = [tracer]
+            config_with_tracer = AgentConfig(**agent_payload)
+
+            Agent(config_with_tracer, global_storage)
+
+            assert global_storage.get("tracer") is tracer
 
     def test_initialize_mcp_tools_success(self, agent_config, global_storage):
         """Test successful MCP tools initialization."""
@@ -290,89 +263,6 @@ class TestAgent:
                 assert response == "Response"
                 # Verify merged context, state, and config were used
                 mock_execute.assert_called_once()
-
-    def test_run_with_langfuse(self, agent_config, global_storage):
-        """Test agent run with Langfuse tracing."""
-        with patch("nexau.archs.main_sub.agent.openai") as mock_openai:
-            mock_openai.OpenAI.return_value = Mock()
-
-            with patch("nexau.archs.main_sub.agent.Langfuse") as mock_langfuse_class:
-                mock_langfuse = Mock()
-                mock_span = Mock()
-                mock_langfuse.start_span.return_value = mock_span
-                mock_langfuse.create_trace_id.return_value = "trace-123"
-                mock_langfuse_class.return_value = mock_langfuse
-
-                with patch.dict(
-                    "os.environ",
-                    {
-                        "LANGFUSE_PUBLIC_KEY": "test-key",
-                        "LANGFUSE_SECRET_KEY": "test-secret",
-                    },
-                ):
-                    agent = Agent(agent_config, global_storage)
-
-                    with patch.object(agent.executor, "execute") as mock_execute:
-                        mock_execute.return_value = (
-                            "Response with tracing",
-                            [
-                                {"role": "system", "content": "System prompt"},
-                                {"role": "user", "content": "Message"},
-                                {"role": "assistant", "content": "Response with tracing"},
-                            ],
-                        )
-
-                        response = agent.run("Message")
-
-                        assert response == "Response with tracing"
-                        # Verify Langfuse span was created and updated
-                        mock_langfuse.start_span.assert_called_once()
-                        span_call = mock_langfuse.start_span.call_args
-                        assert span_call.kwargs["input"] == "Message"
-                        assert span_call.kwargs["name"] == f"agent_{agent_config.name}"
-                        assert span_call.kwargs["metadata"]["agent_name"] == agent_config.name
-
-                        mock_span.update.assert_called_once()
-                        assert mock_span.update.call_args.kwargs["output"] == "Response with tracing"
-                        mock_span.end.assert_called_once()
-                        mock_langfuse.flush.assert_called_once()
-
-    def test_run_with_langfuse_error(self, agent_config, global_storage):
-        """Test agent run when Langfuse tracing fails."""
-        with patch("nexau.archs.main_sub.agent.openai") as mock_openai:
-            mock_openai.OpenAI.return_value = Mock()
-
-            with patch("nexau.archs.main_sub.agent.Langfuse") as mock_langfuse_class:
-                mock_langfuse = Mock()
-                mock_langfuse.start_span.side_effect = Exception("Langfuse error")
-                mock_langfuse.create_trace_id.return_value = "trace-123"
-                mock_langfuse_class.return_value = mock_langfuse
-
-                with patch.dict(
-                    "os.environ",
-                    {
-                        "LANGFUSE_PUBLIC_KEY": "test-key",
-                        "LANGFUSE_SECRET_KEY": "test-secret",
-                    },
-                ):
-                    agent = Agent(agent_config, global_storage)
-
-                    with patch.object(agent.executor, "execute") as mock_execute:
-                        mock_execute.return_value = (
-                            "Response without tracing",
-                            [
-                                {"role": "system", "content": "System prompt"},
-                                {"role": "user", "content": "Message"},
-                                {"role": "assistant", "content": "Response without tracing"},
-                            ],
-                        )
-
-                        # Should continue execution despite Langfuse error
-                        response = agent.run("Message")
-
-                        assert response == "Response without tracing"
-                        mock_execute.assert_called()
-                        mock_langfuse.flush.assert_not_called()
 
     def test_run_with_error_handler(self, agent_config, global_storage):
         """Test agent run with error handler."""

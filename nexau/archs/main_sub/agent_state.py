@@ -16,8 +16,6 @@
 
 from typing import Any, Optional
 
-from langfuse import LangfuseSpan
-
 from .agent_context import AgentContext, GlobalStorage
 
 
@@ -38,7 +36,6 @@ class AgentState:
         context: AgentContext,
         global_storage: GlobalStorage,
         parent_agent_state: Optional["AgentState"] = None,
-        langfuse_span: LangfuseSpan | None = None,
     ):
         """Initialize agent state.
 
@@ -53,7 +50,6 @@ class AgentState:
         self.context = context
         self.global_storage = global_storage
         self.parent_agent_state = parent_agent_state
-        self.langfuse_span = langfuse_span
 
     def get_context_value(self, key: str, default: Any = None) -> Any:
         """Get a value from the context.

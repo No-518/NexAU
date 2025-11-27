@@ -35,6 +35,7 @@ from ..main_sub.config import AgentConfigBase, HookDefinition
 from ..main_sub.prompt_builder import PromptBuilder
 from ..main_sub.skill import Skill
 from ..tool import Tool
+from ..tracer.core import BaseTracer
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ class AgentConfigSchema(
     before_tool_hooks: list[HookDefinition] = Field(default_factory=list)
     middlewares: list[HookDefinition] = Field(default_factory=list)
     token_counter: HookDefinition | None = None
+    tracers: list[HookDefinition] = Field(default_factory=list)
 
 
 class AgentBuilder:
@@ -367,6 +369,37 @@ class AgentBuilder:
 
         self.agent_params["before_tool_hooks"] = before_tool_hooks
 
+        return self
+
+    def build_tracers(self) -> "AgentBuilder":
+        """Build tracer instances from configuration."""
+        tracer_configs = self.config.get("tracers", [])
+        if tracer_configs is None:
+            tracer_configs = []
+
+        if not isinstance(tracer_configs, list):
+            raise ConfigError("'tracers' must be a list")
+
+        resolved_tracers: list[BaseTracer] = []
+        for entry in tracer_configs:
+            if entry is None:
+                raise ConfigError("Tracer entries cannot be null")
+
+            if isinstance(entry, BaseTracer):
+                tracer = entry
+            else:
+                try:
+                    tracer = self._import_and_instantiate(entry)
+                except Exception as e:
+                    raise ConfigError(f"Error loading tracer: {e}")
+
+            if not isinstance(tracer, BaseTracer):
+                raise ConfigError(
+                    f"Tracer must be an instance of BaseTracer, got {type(tracer)}",
+                )
+            resolved_tracers.append(tracer)
+
+        self.agent_params["tracers"] = resolved_tracers
         return self
 
     def build_tools(self) -> "AgentBuilder":
@@ -659,6 +692,7 @@ def load_agent_config(
             .build_llm_config()
             .build_mcp_servers()
             .build_hooks()
+            .build_tracers()
             .build_tools()
             .build_sub_agents()
             .build_skills()

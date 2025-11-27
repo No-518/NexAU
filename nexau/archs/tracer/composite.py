@@ -1,0 +1,204 @@
+# Copyright (c) Nex-AGI. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Composite tracer for sending data to multiple backends simultaneously."""
+
+import logging
+import uuid
+from typing import Any
+
+from nexau.archs.tracer.core import BaseTracer, Span, SpanType
+
+logger = logging.getLogger(__name__)
+
+
+class CompositeTracer(BaseTracer):
+    """Tracer that forwards calls to multiple underlying tracers.
+
+    This allows sending trace data to multiple backends (e.g., Langfuse + OpenTelemetry)
+    simultaneously from a single trace point in the code.
+
+    Example:
+        ```python
+        langfuse_tracer = LangfuseTracer(...)
+        otel_tracer = OpenTelemetryTracer(...)
+        tracer = CompositeTracer([langfuse_tracer, otel_tracer])
+
+        with TraceContext(tracer, "operation", SpanType.AGENT) as span:
+            # Both backends receive this span
+            do_work()
+        ```
+    """
+
+    def __init__(self, tracers: list[BaseTracer]):
+        """Initialize composite tracer with list of backend tracers.
+
+        Args:
+            tracers: List of tracer implementations to forward calls to
+        """
+        self.tracers = tracers
+
+    def start_span(
+        self,
+        name: str,
+        span_type: SpanType,
+        inputs: dict[str, Any] | None = None,
+        parent_span: Span | None = None,
+        attributes: dict[str, Any] | None = None,
+    ) -> Span:
+        """Start a span across all registered tracers.
+
+        Creates a unified Span that tracks vendor-specific span objects
+        for each registered tracer.
+
+        Args:
+            name: Human-readable name for the span
+            span_type: Type of span being created
+            inputs: Input data for this span
+            parent_span: Optional parent span for hierarchy
+            attributes: Optional metadata/attributes
+
+        Returns:
+            A unified Span containing vendor objects for each tracer
+        """
+        span_id = str(uuid.uuid4())
+
+        # Create a unified span that holds vendor-specific objects
+        unified_span = Span(
+            id=span_id,
+            name=name,
+            type=span_type,
+            parent_id=parent_span.id if parent_span else None,
+            inputs=inputs or {},
+            attributes=attributes or {},
+            vendor_obj={},  # Dictionary mapping tracer index to vendor object
+        )
+
+        # Start span in each underlying tracer
+        for idx, tracer in enumerate(self.tracers):
+            try:
+                # Get the corresponding vendor parent object if it exists
+                vendor_parent = None
+                if parent_span and isinstance(parent_span.vendor_obj, dict):
+                    vendor_parent_obj = parent_span.vendor_obj.get(idx)
+                    if vendor_parent_obj is not None:
+                        # Create a wrapper span with just the vendor object
+                        vendor_parent = Span(
+                            id=parent_span.id,
+                            name=parent_span.name,
+                            type=parent_span.type,
+                            vendor_obj=vendor_parent_obj,
+                        )
+
+                # Start span in this tracer
+                internal_span = tracer.start_span(
+                    name=name,
+                    span_type=span_type,
+                    inputs=inputs,
+                    parent_span=vendor_parent,
+                    attributes=attributes,
+                )
+
+                # Store the vendor-specific span object
+                if isinstance(unified_span.vendor_obj, dict):
+                    unified_span.vendor_obj[idx] = internal_span.vendor_obj if internal_span else None
+
+            except Exception as e:
+                logger.warning(f"Failed to start span in tracer {idx}: {e}")
+
+        return unified_span
+
+    def end_span(
+        self,
+        span: Span,
+        outputs: Any = None,
+        error: Exception | None = None,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        """End span in all registered tracers.
+
+        Args:
+            span: The unified span to end
+            outputs: Output data from the operation
+            error: Optional exception if operation failed
+            attributes: Optional additional attributes
+        """
+        if not isinstance(span.vendor_obj, dict):
+            return
+
+        for idx, tracer in enumerate(self.tracers):
+            vendor_handle = span.vendor_obj.get(idx)
+            if vendor_handle is None:
+                continue
+
+            try:
+                # Create a wrapper span with the vendor handle
+                vendor_span = Span(
+                    id=span.id,
+                    name=span.name,
+                    type=span.type,
+                    vendor_obj=vendor_handle,
+                )
+                tracer.end_span(vendor_span, outputs, error, attributes)
+            except Exception as e:
+                logger.warning(f"Failed to end span in tracer {idx}: {e}")
+
+    def add_event(
+        self,
+        span: Span,
+        event_name: str,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        """Add event to span in all registered tracers.
+
+        Args:
+            span: The unified span to add event to
+            event_name: Name of the event
+            attributes: Optional event attributes
+        """
+        if not isinstance(span.vendor_obj, dict):
+            return
+
+        for idx, tracer in enumerate(self.tracers):
+            vendor_handle = span.vendor_obj.get(idx)
+            if vendor_handle is None:
+                continue
+
+            try:
+                # Create a wrapper span with the vendor handle
+                vendor_span = Span(
+                    id=span.id,
+                    name=span.name,
+                    type=span.type,
+                    vendor_obj=vendor_handle,
+                )
+                tracer.add_event(vendor_span, event_name, attributes)
+            except Exception as e:
+                logger.warning(f"Failed to add event in tracer {idx}: {e}")
+
+    def flush(self) -> None:
+        """Flush data in all registered tracers."""
+        for idx, tracer in enumerate(self.tracers):
+            try:
+                tracer.flush()
+            except Exception as e:
+                logger.warning(f"Failed to flush tracer {idx}: {e}")
+
+    def shutdown(self) -> None:
+        """Shutdown all registered tracers."""
+        for idx, tracer in enumerate(self.tracers):
+            try:
+                tracer.shutdown()
+            except Exception as e:
+                logger.warning(f"Failed to shutdown tracer {idx}: {e}")

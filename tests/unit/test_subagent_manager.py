@@ -17,7 +17,7 @@ Unit tests for SubAgentManager class.
 """
 
 import threading
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -59,7 +59,6 @@ class TestSubAgentManager:
 
         assert manager.agent_name == "test_agent"
         assert manager.sub_agent_factories == sub_agent_factories
-        assert manager.langfuse_client is None
         assert manager.global_storage is None
         assert manager.xml_parser is not None
         assert isinstance(manager._shutdown_event, threading.Event)
@@ -67,17 +66,14 @@ class TestSubAgentManager:
 
     def test_initialization_with_optional_params(self, sub_agent_factories):
         """Test SubAgentManager initialization with optional parameters."""
-        mock_langfuse = Mock()
         mock_storage = GlobalStorage()
 
         manager = SubAgentManager(
             agent_name="test_agent",
             sub_agent_factories=sub_agent_factories,
-            langfuse_client=mock_langfuse,
             global_storage=mock_storage,
         )
 
-        assert manager.langfuse_client == mock_langfuse
         assert manager.global_storage == mock_storage
 
     def test_call_sub_agent_not_found(self, subagent_manager):
@@ -216,107 +212,6 @@ class TestSubAgentManager:
         assert result == "result"
         # Global storage should be propagated to nested subagent manager
         assert mock_sub_agent.executor.subagent_manager.global_storage == mock_storage
-
-    @patch("nexau.archs.main_sub.agent_context.get_context")
-    def test_call_sub_agent_with_langfuse(self, mock_get_context, sub_agent_factories):
-        """Test sub-agent call with Langfuse tracing."""
-        mock_langfuse = Mock()
-        mock_context_manager = MagicMock()
-        mock_langfuse.start_as_current_generation.return_value = mock_context_manager
-
-        mock_sub_agent = Mock()
-        mock_sub_agent.config.agent_id = "sub_123"
-        mock_sub_agent.run.return_value = "result"
-
-        factories = {"test_sub": Mock(return_value=mock_sub_agent)}
-        manager = SubAgentManager(agent_name="parent", sub_agent_factories=factories, langfuse_client=mock_langfuse)
-
-        mock_agent_context = Mock()
-        mock_agent_context.context = {"key": "value"}
-        mock_get_context.return_value = mock_agent_context
-
-        result = manager.call_sub_agent("test_sub", "message")
-
-        assert result == "result"
-        mock_sub_agent.run.assert_called_once_with(
-            "message",
-            context={"key": "value"},
-            parent_agent_state=None,
-        )
-
-    @patch("nexau.archs.main_sub.agent_context.get_context")
-    def test_call_sub_agent_shares_langfuse_trace(
-        self,
-        mock_get_context,
-        sub_agent_factories,
-    ):
-        """Child agents should reuse parent's Langfuse trace and client."""
-
-        mock_langfuse = Mock()
-        mock_context_manager = MagicMock()
-        mock_langfuse.start_as_current_generation.return_value = mock_context_manager
-
-        mock_sub_agent = Mock()
-        mock_sub_agent.config.agent_id = "sub_123"
-        mock_sub_agent.run.return_value = "result"
-        mock_sub_agent.executor = Mock()
-        mock_sub_agent.executor.subagent_manager = Mock()
-
-        factories = {"test_sub": Mock(return_value=mock_sub_agent)}
-        manager = SubAgentManager(
-            agent_name="parent",
-            sub_agent_factories=factories,
-            langfuse_client=mock_langfuse,
-        )
-
-        mock_agent_context = Mock()
-        mock_agent_context.context = {"key": "value"}
-        mock_get_context.return_value = mock_agent_context
-
-        parent_state = Mock()
-        parent_state.langfuse_trace_id = "trace-abc"
-        parent_state.langfuse_span_id = "parent-span"
-
-        result = manager.call_sub_agent(
-            "test_sub",
-            "message",
-            parent_agent_state=parent_state,
-        )
-
-        assert result == "result"
-        mock_sub_agent.run.assert_called_once_with(
-            "message",
-            context={"key": "value"},
-            parent_agent_state=parent_state,
-        )
-        assert mock_sub_agent.langfuse_trace_id == "trace-abc"
-        assert mock_sub_agent.langfuse_client == mock_langfuse
-        assert mock_sub_agent.executor.langfuse_client == mock_langfuse
-        assert mock_sub_agent.executor.subagent_manager.langfuse_client == mock_langfuse
-
-    @patch("nexau.archs.main_sub.agent_context.get_context")
-    def test_call_sub_agent_langfuse_error(self, mock_get_context, sub_agent_factories):
-        """Test sub-agent call when Langfuse tracing fails."""
-        mock_langfuse = Mock()
-        mock_langfuse.start_as_current_generation.side_effect = Exception("Langfuse error")
-
-        mock_sub_agent = Mock()
-        mock_sub_agent.config.agent_id = "sub_123"
-        mock_sub_agent.run.return_value = "result"
-
-        factories = {"test_sub": Mock(return_value=mock_sub_agent)}
-        manager = SubAgentManager(agent_name="parent", sub_agent_factories=factories, langfuse_client=mock_langfuse)
-
-        mock_agent_context = Mock()
-        mock_agent_context.context = {"key": "value"}
-        mock_get_context.return_value = mock_agent_context
-
-        # Should fall back to running without Langfuse
-        result = manager.call_sub_agent("test_sub", "message")
-
-        assert result == "result"
-        # Sub-agent should still run
-        assert mock_sub_agent.run.call_count == 1
 
     @patch("nexau.archs.main_sub.agent_context.get_context")
     def test_call_sub_agent_execution_error(self, mock_get_context, subagent_manager, mock_sub_agent):

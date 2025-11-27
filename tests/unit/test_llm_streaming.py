@@ -71,6 +71,38 @@ def test_openai_chat_stream_aggregator_merges_chunks():
     assert tool_call["function"]["arguments"] == '{ "query": "Hello" }'
 
 
+def test_openai_chat_stream_aggregator_preserves_usage_details():
+    aggregator = OpenAIChatStreamAggregator()
+
+    aggregator.consume(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Token"}],
+                    },
+                },
+            ],
+        },
+    )
+    aggregator.consume(
+        {
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "completion_tokens_details": {"reasoning_tokens": 3},
+            },
+        },
+    )
+
+    message = aggregator.finalize()
+
+    assert message["usage"]["prompt_tokens"] == 10
+    assert message["usage"]["completion_tokens_details"]["reasoning_tokens"] == 3
+
+
 def test_anthropic_stream_aggregator_builds_message_blocks():
     aggregator = AnthropicStreamAggregator()
 

@@ -297,17 +297,6 @@ def mock_openai_client():
     return mock_client
 
 
-@pytest.fixture
-def mock_langfuse_client():
-    """Mock Langfuse client for testing."""
-    mock_client = Mock()
-    mock_client.start_as_current_span.return_value.__enter__ = Mock()
-    mock_client.start_as_current_span.return_value.__exit__ = Mock()
-    mock_client.update_current_span = Mock()
-    mock_client.flush = Mock()
-    return mock_client
-
-
 # Agent Fixtures
 @pytest.fixture
 def mock_agent(mock_llm_config, execution_config, global_storage):

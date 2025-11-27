@@ -33,6 +33,7 @@ from nexau.archs.config.config_loader import (
     validate_config_schema,
 )
 from nexau.archs.llm.llm_config import LLMConfig
+from nexau.archs.tracer.core import BaseTracer
 
 
 class TestConfigLoader:
@@ -209,6 +210,63 @@ class TestAgentBuilder:
 
         with pytest.raises(ConfigError, match="Import string must contain ':' separator"):
             builder.build_hooks()
+
+    @patch("nexau.archs.config.config_loader.AgentBuilder._import_and_instantiate")
+    def test_build_tracers_valid(self, mock_import):
+        """Tracer entries should instantiate to BaseTracer objects."""
+        tracer_instance = Mock(spec=BaseTracer)
+        mock_import.return_value = tracer_instance
+
+        config = {"tracers": ["module.path:Tracer"]}
+        builder = AgentBuilder(config, Path("."))
+
+        result = builder.build_tracers()
+
+        mock_import.assert_called_once_with("module.path:Tracer")
+        assert result.agent_params["tracers"] == [tracer_instance]
+
+    @patch("nexau.archs.config.config_loader.AgentBuilder._import_and_instantiate")
+    def test_build_tracers_invalid_type(self, mock_import):
+        """Tracer entries that do not return BaseTracer should fail."""
+        mock_import.return_value = object()
+
+        config = {"tracers": ["module.path:Tracer"]}
+        builder = AgentBuilder(config, Path("."))
+
+        with pytest.raises(ConfigError, match="Tracer must be an instance of BaseTracer"):
+            builder.build_tracers()
+
+    def test_build_tracers_accepts_instance(self):
+        """Existing tracer instances should pass through unchanged."""
+        tracer_instance = Mock(spec=BaseTracer)
+        config = {"tracers": [tracer_instance]}
+
+        builder = AgentBuilder(config, Path("."))
+        result = builder.build_tracers()
+
+        assert result.agent_params["tracers"] == [tracer_instance]
+
+    @patch("nexau.archs.config.config_loader.AgentBuilder._import_and_instantiate")
+    def test_build_tracers_handles_multiple_entries(self, mock_import):
+        """Multiple tracer entries should be instantiated."""
+        tracer1 = Mock(spec=BaseTracer)
+        tracer2 = Mock(spec=BaseTracer)
+        mock_import.side_effect = [tracer1, tracer2]
+
+        config = {"tracers": ["module.path:Tracer1", "module.path:Tracer2"]}
+        builder = AgentBuilder(config, Path("."))
+
+        result = builder.build_tracers()
+
+        assert result.agent_params["tracers"] == [tracer1, tracer2]
+
+    def test_build_tracers_requires_list(self):
+        """Non-list tracers configuration should raise error."""
+        config = {"tracers": "not-a-list"}
+        builder = AgentBuilder(config, Path("."))
+
+        with pytest.raises(ConfigError, match="'tracers' must be a list"):
+            builder.build_tracers()
 
     def test_build_llm_config(self):
         """Test building LLM configuration."""
