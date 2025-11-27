@@ -70,6 +70,8 @@ class LangfuseTracer(BaseTracer):
         secret_key: str | None = None,
         host: str | None = None,
         session_id: str | None = None,
+        user_id: str | None = None,
+        tags: list[str] | None = None,
         debug: bool = False,
         enabled: bool = True,
     ):
@@ -108,6 +110,8 @@ class LangfuseTracer(BaseTracer):
         client_kwargs["debug"] = debug
 
         self.session_id = str(uuid.uuid4()) if session_id is None else session_id
+        self.user_id = user_id
+        self.tags = tags
 
         self.client = Langfuse(**client_kwargs)
         logger.info(f"Langfuse tracer initialized (host: {host or 'default'})")
@@ -159,10 +163,16 @@ class LangfuseTracer(BaseTracer):
             "name": name,
             "metadata": {
                 "span_type": span_type.value,
-                "langfuse_session_id": self.session_id,
                 **(attributes or {}),
             },
         }
+
+        if self.session_id:
+            langfuse_params["metadata"]["langfuse_session_id"] = self.session_id
+        if self.user_id:
+            langfuse_params["metadata"]["langfuse_user_id"] = self.user_id
+        if self.tags:
+            langfuse_params["metadata"]["langfuse_tags"] = self.tags
 
         # Serialize inputs properly
         if inputs:
