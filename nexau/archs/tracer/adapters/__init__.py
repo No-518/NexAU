@@ -14,8 +14,10 @@
 
 """Tracer adapters for different observability backends."""
 
+from nexau.archs.tracer.adapters.in_memory import InMemoryTracer
 from nexau.archs.tracer.adapters.langfuse import LangfuseTracer
 
 __all__ = [
+    "InMemoryTracer",
     "LangfuseTracer",
 ]

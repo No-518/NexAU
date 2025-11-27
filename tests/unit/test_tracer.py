@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from nexau.archs.tracer.adapters import LangfuseTracer
+from nexau.archs.tracer.adapters import InMemoryTracer, LangfuseTracer
 from nexau.archs.tracer.composite import CompositeTracer
 from nexau.archs.tracer.context import (
     TraceContext,
@@ -69,14 +69,6 @@ class RecordingTracer(BaseTracer):
             }
         )
 
-    def add_event(
-        self,
-        span: Span,
-        event_name: str,
-        attributes: dict[str, Any] | None = None,
-    ) -> None:
-        self.events.append({"span": span, "event_name": event_name, "attributes": attributes})
-
     def flush(self) -> None:
         self.flush_count += 1
 
@@ -126,14 +118,6 @@ class FakeBackendTracer(BaseTracer):
                 "attributes": attributes,
             }
         )
-
-    def add_event(
-        self,
-        span: Span,
-        event_name: str,
-        attributes: dict[str, Any] | None = None,
-    ) -> None:
-        self.events.append({"vendor_obj": span.vendor_obj, "event_name": event_name, "attributes": attributes})
 
     def flush(self) -> None:
         self.flush_count += 1
@@ -257,9 +241,6 @@ def test_composite_tracer_broadcasts_calls():
     composite.end_span(child_span, outputs={"status": "ok"})
     assert backend_b.end_calls[0]["outputs"] == {"status": "ok"}
 
-    composite.add_event(child_span, "checkpoint", {"index": 1})
-    assert backend_b.events[0]["event_name"] == "checkpoint"
-
     composite.flush()
     composite.shutdown()
     assert backend_a.flush_count == 1
@@ -276,6 +257,41 @@ def test_composite_tracer_handles_backend_errors():
 
     span = composite.start_span("root", SpanType.AGENT)
     assert span.vendor_obj[1]["name"] == "root"
+
+
+def test_in_memory_tracer_dumps_nested_spans():
+    tracer = InMemoryTracer()
+    root = tracer.start_span("root", SpanType.AGENT, inputs={"foo": "bar"})
+    child = tracer.start_span("child", SpanType.TOOL, parent_span=root, attributes={"nested": True})
+
+    tracer.end_span(child, outputs="child-result")
+    tracer.end_span(root, outputs={"status": "ok"}, attributes={"stage": "test"})
+
+    traces = tracer.dump_traces()
+    assert len(traces) == 1
+
+    root_dump = traces[0]
+    assert root_dump["name"] == "root"
+    assert root_dump["outputs"]["status"] == "ok"
+    assert root_dump["children"][0]["name"] == "child"
+    assert root_dump["children"][0]["outputs"]["result"] == "child-result"
+    assert root_dump["children"][0]["parent_id"] == root.id
+
+
+def test_in_memory_tracer_works_with_composite():
+    memory_tracer = InMemoryTracer()
+    other_tracer = FakeBackendTracer()
+    composite = CompositeTracer([memory_tracer, other_tracer])
+
+    root = composite.start_span("root", SpanType.AGENT)
+    child = composite.start_span("child", SpanType.LLM, parent_span=root)
+
+    composite.end_span(child, outputs={"text": "hello"})
+    composite.end_span(root, outputs={"status": "done"})
+
+    dumped = memory_tracer.dump_traces()
+    assert dumped[0]["outputs"]["status"] == "done"
+    assert dumped[0]["children"][0]["outputs"]["text"] == "hello"
 
 
 def test_langfuse_tracer_creates_trace_and_generation():
@@ -308,35 +324,11 @@ def test_langfuse_tracer_end_span_updates_and_flushes():
     assert tracer.client.flush_count == 1  # type: ignore[union-attr]
 
 
-def test_langfuse_tracer_update_generation_and_events():
-    tracer = LangfuseTracer(debug=True)
-    root_span = tracer.start_span("root", SpanType.AGENT)
-    llm_span = tracer.start_span("llm", SpanType.LLM, parent_span=root_span)
-
-    tracer.update_generation(
-        llm_span,
-        model="gpt",
-        usage={"input_tokens": 1},
-        model_parameters={"temperature": 0.1},
-    )
-    vendor_obj: DummyLangfuseObject = llm_span.vendor_obj  # type: ignore[assignment]
-    assert vendor_obj.update_calls[0]["model"] == "gpt"
-
-    tracer.add_event(root_span, "cache_hit", {"hit": True})
-    assert root_span.vendor_obj.start_observation_calls[-1]["name"] == "cache_hit"
-
-    tracer.flush()
-    tracer.shutdown()
-    assert tracer.client.flush_count >= 1  # type: ignore[union-attr]
-    assert tracer.client.shutdown_count == 1  # type: ignore[union-attr]
-
-
 def test_langfuse_tracer_disabled_skips_client():
     tracer = LangfuseTracer(enabled=False)
     span = tracer.start_span("noop", SpanType.AGENT)
     assert span.vendor_obj is None
     tracer.end_span(span, outputs={"ignored": True})
-    tracer.add_event(span, "skip")
 
 
 def test_langfuse_serialization_handles_custom_objects():

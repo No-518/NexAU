@@ -28,7 +28,6 @@ class SpanType(str, Enum):
     SUB_AGENT = "SUB_AGENT"
     TOOL = "TOOL"
     LLM = "LLM"
-    CHAIN = "CHAIN"
 
 
 @dataclass
@@ -112,24 +111,6 @@ class BaseTracer(ABC):
             outputs: Output data from the operation
             error: Optional exception if the operation failed
             attributes: Optional additional attributes to add
-        """
-
-    @abstractmethod
-    def add_event(
-        self,
-        span: Span,
-        event_name: str,
-        attributes: dict[str, Any] | None = None,
-    ) -> None:
-        """Add a point-in-time event to a span.
-
-        Events are used to record notable occurrences during a span's lifetime,
-        such as token usage, cache hits, or other significant moments.
-
-        Args:
-            span: The span to add the event to
-            event_name: Name of the event
-            attributes: Optional event attributes/data
         """
 
     def flush(self) -> None:

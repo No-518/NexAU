@@ -44,9 +44,6 @@ class DummyTracer(BaseTracer):
     def end_span(self, span: Span, outputs=None, error=None, attributes=None) -> None:
         return None
 
-    def add_event(self, span: Span, event_name: str, attributes: dict | None = None) -> None:
-        return None
-
 
 class TestExecutionConfig:
     """Test cases for ExecutionConfig dataclass."""

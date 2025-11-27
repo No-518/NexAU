@@ -154,39 +154,6 @@ class CompositeTracer(BaseTracer):
             except Exception as e:
                 logger.warning(f"Failed to end span in tracer {idx}: {e}")
 
-    def add_event(
-        self,
-        span: Span,
-        event_name: str,
-        attributes: dict[str, Any] | None = None,
-    ) -> None:
-        """Add event to span in all registered tracers.
-
-        Args:
-            span: The unified span to add event to
-            event_name: Name of the event
-            attributes: Optional event attributes
-        """
-        if not isinstance(span.vendor_obj, dict):
-            return
-
-        for idx, tracer in enumerate(self.tracers):
-            vendor_handle = span.vendor_obj.get(idx)
-            if vendor_handle is None:
-                continue
-
-            try:
-                # Create a wrapper span with the vendor handle
-                vendor_span = Span(
-                    id=span.id,
-                    name=span.name,
-                    type=span.type,
-                    vendor_obj=vendor_handle,
-                )
-                tracer.add_event(vendor_span, event_name, attributes)
-            except Exception as e:
-                logger.warning(f"Failed to add event in tracer {idx}: {e}")
-
     def flush(self) -> None:
         """Flush data in all registered tracers."""
         for idx, tracer in enumerate(self.tracers):
