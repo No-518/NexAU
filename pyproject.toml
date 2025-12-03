@@ -1,6 +1,6 @@
 [project]
 name = "nexau"
-version = "0.3.3"
+version = "0.3.4"
 description = "A general-purpose agent framework"
 readme = "README.md"
 requires-python = ">=3.12"
