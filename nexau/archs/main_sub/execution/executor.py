@@ -235,6 +235,21 @@ class Executor:
                     messages.extend(self.queued_messages)
                     self.queued_messages = []
 
+                before_model_hook_input = BeforeModelHookInput(
+                    agent_state=agent_state,
+                    max_iterations=self.max_iterations,
+                    current_iteration=iteration,
+                    messages=messages,
+                )
+
+                if self.middleware_manager:
+                    try:
+                        messages = self.middleware_manager.run_before_model(
+                            before_model_hook_input,
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Before-model middleware execution failed: {e}")
+
                 # Count current prompt tokens
                 current_prompt_tokens = self.token_counter.count_tokens(
                     messages,
@@ -279,21 +294,6 @@ class Executor:
                 logger.info(
                     f"🔢 Token usage: prompt={current_prompt_tokens}, max_tokens={calculated_max_tokens}, available={available_tokens}",
                 )
-
-                before_model_hook_input = BeforeModelHookInput(
-                    agent_state=agent_state,
-                    max_iterations=self.max_iterations,
-                    current_iteration=iteration,
-                    messages=messages,
-                )
-
-                if self.middleware_manager:
-                    try:
-                        messages = self.middleware_manager.run_before_model(
-                            before_model_hook_input,
-                        )
-                    except Exception as e:
-                        logger.warning(f"⚠️ Before-model middleware execution failed: {e}")
 
                 # Call LLM to get response
                 logger.info(
