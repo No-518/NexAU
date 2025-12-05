@@ -20,7 +20,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from typing import Any
+from typing import Any, cast
 
 from ..sub_agent_naming import extract_sub_agent_name, is_sub_agent_tool_name
 from ..utils.xml_utils import XMLParser
@@ -47,7 +47,10 @@ class ResponseParser:
         is_parallel_sub_agents = False
 
         model_response = response if isinstance(response, ModelResponse) else None
-        response_text = (model_response.content or "") if model_response else (response or "")
+        if model_response:
+            response_text = model_response.content or ""
+        else:
+            response_text = cast(str, response) or ""
 
         # Parse OpenAI tool calls first if present
         if model_response and model_response.tool_calls:

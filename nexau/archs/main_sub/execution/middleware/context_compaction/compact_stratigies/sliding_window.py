@@ -16,9 +16,10 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 logger = logging.getLogger(__name__)
 
@@ -228,10 +229,11 @@ class SlidingWindowCompaction:
 
         response = self.llm_client.chat.completions.create(
             model=self.summary_model,
-            messages=llm_messages,
+            messages=cast(list[ChatCompletionMessageParam], llm_messages),
             temperature=0.6,
         )
 
-        summary = response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        summary = content.strip() if content else ""
         logger.info("[SlidingWindowCompaction] LLM summary generated success")
         return summary

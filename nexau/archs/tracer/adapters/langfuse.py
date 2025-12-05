@@ -264,7 +264,8 @@ class LangfuseTracer(BaseTracer):
             if self.debug:
                 duration = span.duration_ms()
                 logger.debug(f"Ended Langfuse span: {span.name} (duration={duration:.2f}ms)")
-            self.client.flush()
+            if self.client is not None:
+                self.client.flush()
 
         except Exception as e:
             logger.warning(f"Failed to end Langfuse span '{span.name}': {e}")

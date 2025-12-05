@@ -180,7 +180,7 @@ def _cleanup_kernels(agent_state: "AgentState", kernel_type: str | None = None):
     agent_state.set_global_value(KERNEL_MANAGERS_KEY, kernel_managers)
 
 
-def _process_output_message(msg: dict[str, Any], kernel_type: str) -> dict[str, Any]:
+def _process_output_message(msg: dict[str, Any], kernel_type: str) -> dict[str, Any] | None:
     """
     Process a Jupyter output message into a standardized format.
 
@@ -251,7 +251,7 @@ def _process_output_message(msg: dict[str, Any], kernel_type: str) -> dict[str, 
         return {"type": "unknown", "msg_type": msg_type, "content": content}
 
 
-def _aggregate_outputs(raw_outputs: list) -> list:
+def _aggregate_outputs(raw_outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Aggregate consecutive stream outputs with the same name to reduce fragmentation.
 
@@ -264,8 +264,8 @@ def _aggregate_outputs(raw_outputs: list) -> list:
     if not raw_outputs:
         return []
 
-    aggregated = []
-    current_stream = None
+    aggregated: list[dict[str, Any]] = []
+    current_stream: dict[str, Any] | None = None
 
     for output in raw_outputs:
         if output is None:
@@ -304,7 +304,7 @@ def run_code_tool(
     description: str | None = None,
     reset_kernel: bool = False,
     shutdown_after: bool = False,
-    agent_state: "AgentState" = None,
+    agent_state: "AgentState" | None = None,
 ) -> dict[str, Any]:
     """
     Execute code in a Jupyter notebook kernel (Python or Bash) with proper handling and output capture.
@@ -416,9 +416,9 @@ def run_code_tool(
         )
 
         # Collect outputs
-        raw_outputs = []
+        raw_outputs: list[dict[str, Any]] = []
         status = "success"
-        error_info = None
+        error_info: dict[str, Any] | None = None
 
         # Wait for execution to complete
         deadline = time.time() + timeout_seconds

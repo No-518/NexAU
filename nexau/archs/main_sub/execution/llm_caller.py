@@ -185,22 +185,23 @@ class LLMCaller:
     def _call_with_retry(
         self,
         params: ModelCallParams,
-    ) -> ModelResponse | str | None:
+    ) -> ModelResponse | None:
         """Call OpenAI client with exponential backoff retry."""
         from .executor import AgentStopReason
 
         force_stop_reason = params.force_stop_reason
 
-        if force_stop_reason != AgentStopReason.SUCCESS:
+        if force_stop_reason and force_stop_reason != AgentStopReason.SUCCESS:
+            reason_name = getattr(force_stop_reason, "name", str(force_stop_reason))
             logger.info(
-                f"🛑 LLM call forced to stop due to {force_stop_reason.name}",
+                f"🛑 LLM call forced to stop due to {reason_name}",
             )
             return None
 
         backoff = 1
         for i in range(self.retry_attempts):
             try:
-                if force_stop_reason != AgentStopReason.SUCCESS:
+                if force_stop_reason and force_stop_reason != AgentStopReason.SUCCESS:
                     return None
                 kwargs = dict(params.api_params)
                 response_content = call_llm_with_different_client(
@@ -232,6 +233,7 @@ class LLMCaller:
                     raise e
                 time.sleep(backoff)
                 backoff *= 2
+        return None
 
 
 def call_llm_with_different_client(
@@ -276,8 +278,8 @@ def call_llm_with_different_client(
 
 def openai_to_anthropic_message(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Convert an OpenAI message to an Anthropic message."""
-    system_messages = []
-    user_messages = []
+    system_messages: list[dict[str, str]] = []
+    user_messages: list[dict[str, Any]] = []
     for message in messages:
         if message.get("role") == "system":
             system_messages.append({"type": "text", "text": message.get("content", "")})
@@ -293,12 +295,12 @@ def openai_to_anthropic_message(messages: list[dict[str, Any]]) -> tuple[list[di
                 }
             )
         elif message.get("role") == "assistant":
-            new_message = {"role": "assistant", "content": []}
+            new_message: dict[str, Any] = {"role": "assistant", "content": []}
             if message.get("content", ""):
                 # if content is not empty, add it to the content list
                 new_message["content"].append({"type": "text", "text": message.get("content", "")})
             tool_calls = message.get("tool_calls", [])
-            new_tool_calls = []
+            new_tool_calls: list[dict[str, Any]] = []
             for tool_call in tool_calls:
                 new_tool_calls.append(
                     {
@@ -1012,7 +1014,7 @@ class AnthropicStreamAggregator:
         elif event_type == "content_block_start":
             index = payload.get("index")
             block = _to_serializable_dict(payload.get("content_block", {}))
-            if block:
+            if block and isinstance(index, int):
                 block["_input_buffer"] = ""
                 self._active_blocks[index] = block
         elif event_type == "content_block_delta":
@@ -1026,7 +1028,7 @@ class AnthropicStreamAggregator:
         self._flush_active_blocks()
         if not self._completed_blocks:
             raise RuntimeError("No stream chunks were received from Anthropic messages stream")
-        message = {
+        message: dict[str, Any] = {
             "role": self.role or "assistant",
             "content": self._completed_blocks,
         }
@@ -1038,6 +1040,8 @@ class AnthropicStreamAggregator:
 
     def _apply_block_delta(self, payload: dict[str, Any]) -> None:
         index = payload.get("index")
+        if not isinstance(index, int):
+            return
         delta = _to_serializable_dict(payload.get("delta", {}))
         block = self._active_blocks.setdefault(index, {"type": "text", "text": "", "_input_buffer": ""})
         delta_type = delta.get("type")
@@ -1254,15 +1258,15 @@ class OpenAIResponsesStreamAggregator:
                 output_items.append(self._reasoning_builders[item_id].to_output_item())
 
         # Append any builders that were not in the initial output order
-        for item_id, builder in self._message_builders.items():
+        for item_id, message_builder in self._message_builders.items():
             if item_id not in self._output_order:
-                output_items.append(builder.to_output_item())
-        for item_id, builder in self._tool_builders.items():
+                output_items.append(message_builder.to_output_item())
+        for item_id, tool_builder in self._tool_builders.items():
             if item_id not in self._output_order:
-                output_items.append(builder.to_output_item())
-        for item_id, builder in self._reasoning_builders.items():
+                output_items.append(tool_builder.to_output_item())
+        for item_id, reasoning_builder in self._reasoning_builders.items():
             if item_id not in self._output_order:
-                output_items.append(builder.to_output_item())
+                output_items.append(reasoning_builder.to_output_item())
 
         if not output_items and self._completed_response is not None:
             return self._completed_response
@@ -1286,50 +1290,50 @@ class OpenAIResponsesStreamAggregator:
 
         item_type = item.get("type")
         if item_type == "message":
-            builder = self._message_builders.setdefault(item_id, ResponseMessageBuilder(item_id, item.get("role", "assistant")))
+            message_builder = self._message_builders.setdefault(item_id, ResponseMessageBuilder(item_id, item.get("role", "assistant")))
             content = item.get("content") or []
             for idx, part in enumerate(content):
-                builder.add_part(idx, _to_serializable_dict(part))
+                message_builder.add_part(idx, _to_serializable_dict(part))
         elif item_type == "function_call":
-            builder = self._tool_builders.setdefault(item_id, ResponseToolCallBuilder(item_id))
-            builder.update_from_item(item)
+            tool_builder = self._tool_builders.setdefault(item_id, ResponseToolCallBuilder(item_id))
+            tool_builder.update_from_item(item)
         elif item_type == "reasoning":
-            builder = self._reasoning_builders.setdefault(
+            reasoning_builder = self._reasoning_builders.setdefault(
                 item_id,
                 ReasoningSummaryBuilder(item_id, content=item.get("content"), summary=item.get("summary")),
             )
-            builder.update_from_item(item)
+            reasoning_builder.update_from_item(item)
 
     def _handle_content_part_added(self, payload: dict[str, Any]) -> None:
         item_id = payload.get("item_id")
         if not item_id:
             return
-        builder = self._message_builders.setdefault(item_id, ResponseMessageBuilder(item_id))
-        builder.add_part(payload.get("content_index", 0), _to_serializable_dict(payload.get("part", {})))
+        message_builder = self._message_builders.setdefault(item_id, ResponseMessageBuilder(item_id))
+        message_builder.add_part(payload.get("content_index", 0), _to_serializable_dict(payload.get("part", {})))
 
     def _handle_text_delta(self, payload: dict[str, Any]) -> None:
         item_id = payload.get("item_id")
         if not item_id:
             return
-        builder = self._message_builders.setdefault(item_id, ResponseMessageBuilder(item_id))
+        message_builder = self._message_builders.setdefault(item_id, ResponseMessageBuilder(item_id))
         delta_text = payload.get("delta", "")
         if not isinstance(delta_text, str):
             delta_text = str(delta_text)
-        builder.append_text(payload.get("content_index", 0), delta_text)
+        message_builder.append_text(payload.get("content_index", 0), delta_text)
 
     def _handle_function_arguments_delta(self, payload: dict[str, Any]) -> None:
         item_id = payload.get("item_id")
         if not item_id:
             return
-        builder = self._tool_builders.setdefault(item_id, ResponseToolCallBuilder(item_id))
-        builder.append_arguments(payload.get("delta", ""))
+        tool_builder = self._tool_builders.setdefault(item_id, ResponseToolCallBuilder(item_id))
+        tool_builder.append_arguments(payload.get("delta", ""))
 
     def _handle_function_arguments_done(self, payload: dict[str, Any]) -> None:
         item_id = payload.get("item_id")
         if not item_id:
             return
-        builder = self._tool_builders.setdefault(item_id, ResponseToolCallBuilder(item_id))
-        builder.set_arguments(payload.get("arguments", ""))
+        tool_builder = self._tool_builders.setdefault(item_id, ResponseToolCallBuilder(item_id))
+        tool_builder.set_arguments(payload.get("arguments", ""))
 
     def _handle_reasoning_delta(self, payload: dict[str, Any]) -> None:
         item_id = payload.get("item_id") or f"_reasoning_{payload.get('output_index', 0)}"
@@ -1337,5 +1341,5 @@ class OpenAIResponsesStreamAggregator:
         delta = payload.get("delta", "")
         if not isinstance(delta, str):
             delta = str(delta)
-        builder = self._reasoning_builders.setdefault(item_id, ReasoningSummaryBuilder(item_id))
-        builder.append_summary_delta(summary_index, delta)
+        reasoning_builder = self._reasoning_builders.setdefault(item_id, ReasoningSummaryBuilder(item_id))
+        reasoning_builder.append_summary_delta(summary_index, delta)

@@ -375,8 +375,11 @@ class TestMiddlewareManager:
 
         def cleanup_hook(hook_input: AfterModelHookInput) -> HookResult:
             order.append("cleanup")
-            hook_input.parsed_response.tool_calls = []
-            return HookResult.with_modifications(parsed_response=hook_input.parsed_response, force_continue=True)
+            parsed_response = hook_input.parsed_response
+            if parsed_response is None:
+                return HookResult.no_changes()
+            parsed_response.tool_calls = []
+            return HookResult.with_modifications(parsed_response=parsed_response, force_continue=True)
 
         manager = MiddlewareManager(
             [

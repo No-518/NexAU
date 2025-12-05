@@ -10,7 +10,7 @@ install:
 	$(UV) run pre-commit install
 
 lint:
-	$(UV) run ruff check .
+	$(UV) run ruff check . --fix
 
 format:
 	$(UV) run ruff format

@@ -30,7 +30,7 @@ class CLIEnabledSubAgentManager(SubAgentManager):
     def __init__(
         self,
         agent_name: str,
-        sub_agent_factories: dict[str, Callable[[], Any]],
+        sub_agent_factories: dict[str, Callable[..., Any]],
         global_storage=None,
         progress_hook=None,
         tool_hook=None,

@@ -67,9 +67,9 @@ def assert_dict_contains(actual: dict[str, Any], expected: dict[str, Any]) -> bo
     return True
 
 
-def mock_llm_response(content: str, tool_calls: list = None, finish_reason: str = "stop"):
+def mock_llm_response(content: str, tool_calls: list[dict[str, Any]] | None = None, finish_reason: str = "stop"):
     """Create a mock LLM response."""
-    message = {"content": content, "role": "assistant"}
+    message: dict[str, Any] = {"content": content, "role": "assistant"}
 
     if tool_calls:
         message["tool_calls"] = tool_calls

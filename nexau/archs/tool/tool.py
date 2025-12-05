@@ -133,7 +133,7 @@ class Tool:
         yaml_path: str,
         binding: Callable | str | None,
         as_skill: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> "Tool":
         """Load tool definition from YAML file and bind to implementation."""
         path = Path(yaml_path)
@@ -287,7 +287,9 @@ class Tool:
         }
 
     def __repr__(self) -> str:
-        return f"Tool(name='{self.name}', implementation={self.implementation.__name__})"
+        impl = self.implementation
+        impl_name = getattr(impl, "__name__", repr(impl)) if impl is not None else "None"
+        return f"Tool(name='{self.name}', implementation={impl_name})"
 
     def __str__(self) -> str:
         tool_str = f"Tool '{self.name}': {self.description[:50]}{'...' if len(self.description) > 50 else ''}"

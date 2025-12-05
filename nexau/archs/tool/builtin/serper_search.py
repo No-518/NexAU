@@ -21,9 +21,10 @@ import httpx
 
 class SerperSearch:
     def __init__(self, timeout: float = 30.0, max_retries: int = 3):
-        self.api_key = os.getenv("SERPER_API_KEY")
-        if not self.api_key:
+        api_key = os.getenv("SERPER_API_KEY")
+        if not api_key:
             raise ValueError("Serper API key is required")
+        self.api_key: str = api_key
         self.base_url = "https://google.serper.dev/"
         self.timeout = timeout
         self.max_retries = max_retries

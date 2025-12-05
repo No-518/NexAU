@@ -15,6 +15,7 @@
 """Agent context manager for context management."""
 
 import threading
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
 
@@ -29,7 +30,7 @@ class AgentContext:
 
         # Track if context has been modified (for prompt refresh)
         self._context_modified = False
-        self._modification_callbacks = []
+        self._modification_callbacks: list[Callable] = []
 
     def __enter__(self):
         """Enter the context and set the thread-local context."""

@@ -16,13 +16,18 @@
 
 import asyncio
 import logging
+from collections.abc import Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.types import Tool as MCPToolType
 
 from ..tool import Tool, cache_result
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +54,9 @@ class HTTPMCPSession:
         self._initialized = False
         self._transport: str | None = None
         self._pending_requests: dict[str, asyncio.Future] = {}
-        self._sse_client = None
-        self._sse_stream_cm = None
-        self._sse_stream = None
+        self._sse_client: httpx.AsyncClient | None = None
+        self._sse_stream_cm: AbstractAsyncContextManager[httpx.Response] | None = None
+        self._sse_stream: httpx.Response | None = None
         self._sse_listener_task: asyncio.Task | None = None
         self._sse_endpoint_url: str | None = None
         self._sse_endpoint_headers: dict[str, str] = {}
@@ -628,6 +633,8 @@ class MCPTool(Tool):
         self.client_session = client_session
         self.server_config = server_config  # Store config for recreating sessions
         self._session_type = type(client_session).__name__
+        self._session_params: dict[str, Any] | MCPServerConfig | None = None
+        self._sync_executor: Callable[..., dict[str, Any]] = self._execute_sync
 
         # Store session parameters for thread-safe recreation
         if isinstance(client_session, HTTPMCPSession):
@@ -636,23 +643,23 @@ class MCPTool(Tool):
                 "headers": client_session.headers,
                 "timeout": client_session.timeout,
             }
-        else:
+        elif server_config is not None:
             # For stdio sessions, store the server config for recreation
             self._session_params = server_config
 
         if server_config and server_config.use_cache:
-            self._execute_sync = cache_result(self._execute_sync)
+            self._sync_executor = cache_result(self._sync_executor)
 
         # Convert MCP tool to NexAU tool format
         super().__init__(
             name=mcp_tool.name,
             description=mcp_tool.description or "",
             input_schema=mcp_tool.inputSchema,
-            implementation=self._execute_sync,
-            disable_parallel=server_config.disable_parallel,
+            implementation=self._sync_executor,
+            disable_parallel=server_config.disable_parallel if server_config else False,
         )
 
-    async def _get_thread_local_session(self) -> ClientSession | HTTPMCPSession:
+    async def _get_thread_local_session(self) -> Any:
         """Get or create a thread-local session to avoid event loop conflicts."""
         # For HTTPMCPSession, we can safely create a new instance in each thread
         if self._session_type == "HTTPMCPSession" and isinstance(
@@ -895,7 +902,7 @@ class MCPTool(Tool):
         filtered_kwargs = dict(
             sorted(filtered_kwargs.items(), key=lambda x: x[0]),
         )
-        return self._execute_sync(**filtered_kwargs)
+        return self._sync_executor(**filtered_kwargs)
 
     async def _execute_async(self, **kwargs) -> dict[str, Any]:
         """Execute the MCP tool asynchronously."""
@@ -931,7 +938,7 @@ class MCPClient:
 
     def __init__(self):
         self.servers: dict[str, MCPServerConfig] = {}
-        self.sessions: dict[str, ClientSession | HTTPMCPSession] = {}
+        self.sessions: dict[str, Any] = {}
         self.tools: dict[str, MCPTool] = {}
 
     def add_server(self, config: MCPServerConfig) -> None:
@@ -1363,7 +1370,7 @@ class MCPManager:
 
         return all_tools
 
-    def get_available_tools(self) -> list[MCPTool]:
+    def get_available_tools(self) -> Sequence[Tool]:
         """Get all available MCP tools."""
         return self.client.get_all_tools()
 
@@ -1384,7 +1391,7 @@ def get_mcp_manager() -> MCPManager:
     return _mcp_manager
 
 
-async def initialize_mcp_tools(server_configs: list[dict[str, Any]]) -> list[Tool]:
+async def initialize_mcp_tools(server_configs: list[dict[str, Any]]) -> Sequence[Tool]:
     """Initialize MCP tools from server configurations.
 
     Args:
@@ -1427,7 +1434,7 @@ async def initialize_mcp_tools(server_configs: list[dict[str, Any]]) -> list[Too
     return manager.get_available_tools()
 
 
-def sync_initialize_mcp_tools(server_configs: list[dict[str, Any]]) -> list[Tool]:
+def sync_initialize_mcp_tools(server_configs: list[dict[str, Any]]) -> Sequence[Tool]:
     """Synchronous wrapper for initialize_mcp_tools."""
     # Always create a new event loop to avoid "Future attached to a different loop" errors
     # This matches the pattern used in MCPTool._execute_sync

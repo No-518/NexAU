@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from .model_response import ModelResponse
 from .parse_structures import ParsedResponse
@@ -63,6 +63,9 @@ class AfterModelHookInput(BeforeModelHookInput):
     model_response: ModelResponse | None = None
 
 
+HookResultT = TypeVar("HookResultT", bound="HookResult")
+
+
 @dataclass
 class HookResult:
     """Unified result object for all middleware hook phases."""
@@ -92,19 +95,19 @@ class HookResult:
         )
 
     @classmethod
-    def no_changes(cls) -> HookResult:
+    def no_changes(cls: type[HookResultT]) -> HookResultT:
         return cls()
 
     @classmethod
     def with_modifications(
-        cls,
+        cls: type[HookResultT],
         *,
         messages: list[dict[str, Any]] | None = None,
         parsed_response: ParsedResponse | None = None,
         force_continue: bool = False,
         tool_output: Any | None = None,
         tool_input: dict[str, Any] | None = None,
-    ) -> HookResult:
+    ) -> HookResultT:
         return cls(
             messages=messages,
             parsed_response=parsed_response,
@@ -381,7 +384,8 @@ class LoggingMiddleware(Middleware):
     def stream_chunk(self, chunk: Any, params: ModelCallParams) -> Any:
         """Inspect or mutate a streaming model chunk before aggregation."""
         logger = self.model_logger
-        logger.info("🎣 Streaming: %s", chunk)
+        if logger:
+            logger.info("🎣 Streaming: %s", chunk)
 
         return chunk
 
@@ -392,6 +396,22 @@ class LoggingMiddleware(Middleware):
             log_fn(message)
         else:
             print(message)
+
+
+def create_tool_after_approve_hook(tool_name: str) -> AfterModelHook:
+    """Compatibility helper used by legacy examples to log approved tool usage."""
+
+    def _hook(hook_input: AfterModelHookInput) -> HookResult:
+        parsed = hook_input.parsed_response
+        if not parsed or not getattr(parsed, "tool_calls", None):
+            return HookResult.no_changes()
+
+        should_log = any(getattr(call, "tool_name", None) == tool_name for call in parsed.tool_calls)
+        if should_log:
+            logger.info("✅ Tool '%s' auto-approved by create_tool_after_approve_hook", tool_name)
+        return HookResult.no_changes()
+
+    return _hook
 
 
 class MiddlewareManager:

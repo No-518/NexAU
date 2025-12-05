@@ -15,7 +15,12 @@
 """System prompt handling for different prompt types."""
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from jinja2 import BaseLoader, Environment, Template
+
+if TYPE_CHECKING:
+    from nexau.archs.main_sub.agent import Agent
 
 
 class PromptHandler:
@@ -23,14 +28,11 @@ class PromptHandler:
 
     def __init__(self):
         """Initialize the prompt handler."""
-        self._jinja_env = None
         self._setup_jinja()
 
     def _setup_jinja(self):
         """Setup Jinja2 environment."""
-        from jinja2 import BaseLoader, Environment
 
-        # Create a basic environment
         self._jinja_env = Environment(
             loader=BaseLoader(),
             trim_blocks=True,
@@ -63,6 +65,7 @@ class PromptHandler:
             return self._process_file_prompt(prompt, context)
         elif prompt_type == "jinja":
             return self._process_jinja_prompt(prompt, context)
+        return ""
 
     def _process_string_prompt(
         self,
@@ -139,7 +142,7 @@ class PromptHandler:
                 template_content = f.read()
 
             # Create template
-            template = self._jinja_env.from_string(template_content)
+            template: Template = self._jinja_env.from_string(template_content)
 
             # Render with context
             rendered = template.render(**(context or {}))
@@ -161,7 +164,7 @@ class PromptHandler:
 
         return datetime.now().isoformat()
 
-    def get_default_context(self, agent) -> dict[str, Any]:
+    def get_default_context(self, agent: "Agent") -> dict[str, Any]:
         """Get default context for template rendering."""
         context = {
             "agent_name": getattr(agent, "name", "Unknown Agent"),
@@ -186,7 +189,7 @@ class PromptHandler:
     def create_dynamic_prompt(
         self,
         base_template: str,
-        agent,
+        agent: "Agent",
         additional_context: dict[str, Any] | None = None,
         template_type: str = "string",
     ) -> str:
@@ -195,7 +198,7 @@ class PromptHandler:
         if not self.validate_prompt_type(template_type):
             raise ValueError(f"Invalid template type: {template_type}")
 
-        context = self.get_default_context(agent)
+        context: dict[str, Any] = self.get_default_context(agent)
 
         if additional_context:
             context.update(additional_context)
@@ -210,3 +213,4 @@ class PromptHandler:
         except Exception as e:
             # Return base template if rendering fails
             raise ValueError(f"Error creating dynamic prompt: {e}")
+        return ""

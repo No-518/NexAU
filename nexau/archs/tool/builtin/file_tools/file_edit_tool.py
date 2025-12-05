@@ -646,7 +646,7 @@ def clear_read_timestamps() -> None:
     clear_file_timestamps()
 
 
-def get_file_read_status(file_path: str) -> dict[str, bool | float | str]:
+def get_file_read_status(file_path: str) -> dict[str, bool | float | str | None]:
     """
     Get the read status of a file.
 
@@ -659,7 +659,7 @@ def get_file_read_status(file_path: str) -> dict[str, bool | float | str]:
     abs_path = os.path.abspath(file_path)
     read_timestamp = get_file_timestamp(file_path)
 
-    result = {
+    result: dict[str, bool | float | str | None] = {
         "file_path": abs_path,
         "has_been_read": has_file_timestamp(file_path),
         "read_timestamp": read_timestamp if read_timestamp > 0.0 else None,
@@ -677,56 +677,3 @@ def get_file_read_status(file_path: str) -> dict[str, bool | float | str]:
         result["file_exists"] = False
 
     return result
-
-
-if __name__ == "__main__":
-    # Example usage - demonstrating different operations
-
-    # 创建新文件
-    print("=== 创建新文件 ===")
-    result = file_edit_tool.invoke(
-        {
-            "file_path": "test.py",
-            "old_string": "",
-            "new_string": "print('Hello World')",
-        },
-    )
-    print(result)
-    print()
-    # breakpoint()
-    # 标记文件为已读（模拟读取操作）
-    mark_file_as_read("test.py")
-
-    # 更新现有文件
-    print("=== 更新现有文件 ===")
-    result = file_edit_tool.invoke(
-        {
-            "file_path": "test.py",
-            "old_string": "print('Hello World')",
-            "new_string": "print('Hello Python')",
-        },
-    )
-    print(result)
-    print()
-    # breakpoint()
-    # 再次标记为已读
-    mark_file_as_read("test.py")
-
-    # 删除内容
-    print("=== 删除内容 ===")
-    result = file_edit_tool.invoke(
-        {
-            "file_path": "test.py",
-            "old_string": "print('Hello Python')",
-            "new_string": "",
-        },
-    )
-    print(result)
-    print()
-    # 清理测试文件
-    # breakpoint()
-    try:
-        os.remove("test.py")
-        print("清理完成：删除了测试文件 test.py")
-    except FileNotFoundError:
-        pass

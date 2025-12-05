@@ -321,18 +321,13 @@ def get_chat_user_mapping(chat_id: str) -> dict:
         while page_count < max_pages:
             page_count += 1
 
-            # 构建请求参数
-            request_params = {
-                "chat_id": chat_id,
-                "page_size": 100,  # 每页最大100个用户
-            }
-
-            if page_token:
-                request_params["page_token"] = page_token
-
             # 获取当前页的群组成员列表
             logger.info(f"获取群聊 {chat_id} 第 {page_count} 页用户列表...")
-            members_response = search_users_in_chat(request_params)
+            members_response = search_users_in_chat(
+                chat_id=chat_id,
+                page_size=100,
+                page_token=page_token or None,
+            )
 
             # 解析响应
             try:
@@ -1873,7 +1868,7 @@ def get_user_id_by_name(name: Annotated[str, "要查找的用户姓名"]) -> str
     """
     try:
         # 1. 首先获取所有群组
-        chat_list_response = get_feishu_chat_list({"page_size": 100})
+        chat_list_response = get_feishu_chat_list(page_size=100)
 
         # 检查响应是否是有效的JSON
         try:
@@ -1906,7 +1901,7 @@ def get_user_id_by_name(name: Annotated[str, "要查找的用户姓名"]) -> str
                 continue
 
             # 获取群组成员
-            members_response = search_users_in_chat({"chat_id": chat_id})
+            members_response = search_users_in_chat(chat_id=chat_id)
 
             # 检查成员响应是否是有效的JSON
             try:

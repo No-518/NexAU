@@ -69,7 +69,7 @@ class AgentConfigBase[TTool, TSkill, TSubAgent, THook](BaseModel):
     sub_agents: list[TSubAgent] | None = None
     skills: list[TSkill] = Field(default_factory=list)
     llm_config: Any | None = None
-    stop_tools: list[str] = Field(default_factory=list)
+    stop_tools: set[str] | None = Field(default_factory=set)
     initial_state: dict[str, Any] | None = None
     initial_config: dict[str, Any] | None = None
     initial_context: dict[str, Any] | None = Field(
@@ -82,10 +82,9 @@ class AgentConfigBase[TTool, TSkill, TSubAgent, THook](BaseModel):
     after_tool_hooks: list[THook] | None = None
     before_model_hooks: list[THook] | None = None
     before_tool_hooks: list[THook] | None = None
-    middlewares: list[Any] | None = None
     middlewares: list[THook] | None = None
     error_handler: Callable | None = None
-    token_counter: Callable | None = None
+    token_counter: HookDefinition | None = None
     global_storage: dict[str, Any] = Field(default_factory=dict)
     max_context_tokens: int = Field(default=128000, ge=1)
     max_running_subagents: int = Field(default=5, ge=0)
@@ -139,7 +138,6 @@ class AgentConfig(
 
     sub_agents: list[tuple[str, Callable[[], Any]]] | None = None
     llm_config: LLMConfig | dict[str, Any] | None = None
-    stop_tools: set[str] | None = None
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
     after_model_hooks: list[Callable] | None = None
     after_tool_hooks: list[Callable] | None = None
@@ -152,6 +150,7 @@ class AgentConfig(
         default_factory=dict,
         exclude=True,
     )
+    token_counter: HookCallable | None = None
 
     @field_validator("llm_config", mode="before")
     @classmethod

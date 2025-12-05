@@ -27,18 +27,22 @@ from typing import Annotated, Any
 import pandas as pd
 import yaml
 
-LLM_FRIENDLY_MAX_DEPTH = os.getenv("LLM_FRIENDLY_MAX_DEPTH", 5)
-LLM_FRIENDLY_MAX_SIZE_IN_BYTES = os.getenv(
-    "LLM_FRIENDLY_MAX_SIZE_IN_BYTES",
-    5000,
+LLM_FRIENDLY_MAX_DEPTH = int(os.getenv("LLM_FRIENDLY_MAX_DEPTH", 5))
+LLM_FRIENDLY_MAX_SIZE_IN_BYTES = int(
+    os.getenv(
+        "LLM_FRIENDLY_MAX_SIZE_IN_BYTES",
+        5000,
+    )
 )
-LLM_FRIENDLY_MAX_ARRAY_LENGTH = os.getenv("LLM_FRIENDLY_MAX_ARRAY_LENGTH", 10)
-LLM_FRIENDLY_MAX_DICT_KEYS = os.getenv("LLM_FRIENDLY_MAX_DICT_KEYS", 10)
-LLM_FRIENDLY_MAX_STRING_LENGTH = os.getenv(
-    "LLM_FRIENDLY_MAX_STRING_LENGTH",
-    200,
+LLM_FRIENDLY_MAX_ARRAY_LENGTH = int(os.getenv("LLM_FRIENDLY_MAX_ARRAY_LENGTH", 10))
+LLM_FRIENDLY_MAX_DICT_KEYS = int(os.getenv("LLM_FRIENDLY_MAX_DICT_KEYS", 10))
+LLM_FRIENDLY_MAX_STRING_LENGTH = int(
+    os.getenv(
+        "LLM_FRIENDLY_MAX_STRING_LENGTH",
+        200,
+    )
 )
-LLM_FRIENDLY_MAX_SAMPLE_ROWS = os.getenv("LLM_FRIENDLY_MAX_SAMPLE_ROWS", 10)
+LLM_FRIENDLY_MAX_SAMPLE_ROWS = int(os.getenv("LLM_FRIENDLY_MAX_SAMPLE_ROWS", 10))
 
 
 class ContentWithCustomLength:
@@ -123,7 +127,7 @@ class DataFrameFormatter:
             return "datetime"
         elif pd.api.types.is_timedelta64_dtype(dtype):
             return "timedelta"
-        elif pd.api.types.is_categorical_dtype(dtype):
+        elif isinstance(dtype, pd.CategoricalDtype):
             return "category"
         else:
             return "str"
@@ -141,22 +145,23 @@ class FileFormatHandler:
             return json.load(file)
 
     @staticmethod
-    def read_jsonl(path: str) -> list[Any]:
+    def read_jsonl(path: str) -> list[Any] | ContentWithCustomLength:
         """Read JSONL files"""
         line_nums = FileFormatHandler._get_file_line_nums(path)
         if line_nums <= LLM_FRIENDLY_MAX_ARRAY_LENGTH * 2:
             with open(path, encoding="utf-8") as file:
                 return [json.loads(line) for line in file if line.strip()]
         else:
-            content = []
-            f = open(path, "rb")
-            file = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            for idx, line in enumerate(iter(file.readline, b"")):
-                if idx >= LLM_FRIENDLY_MAX_ARRAY_LENGTH * 2:
-                    break
-                content.append(json.loads(line.decode("utf-8")))
-            file.close()
-            f.close()
+            content: list[Any] = []
+            with open(path, "rb") as raw_file:
+                mapped_file = mmap.mmap(raw_file.fileno(), 0, access=mmap.ACCESS_READ)
+                try:
+                    for idx, line in enumerate(iter(mapped_file.readline, b"")):
+                        if idx >= LLM_FRIENDLY_MAX_ARRAY_LENGTH * 2:
+                            break
+                        content.append(json.loads(line.decode("utf-8")))
+                finally:
+                    mapped_file.close()
             return ContentWithCustomLength(content, line_nums)
 
     @staticmethod
@@ -199,7 +204,7 @@ class FileFormatHandler:
     @staticmethod
     def _xml_to_dict(element) -> dict[str, Any]:
         """Convert XML element to dictionary"""
-        result = {}
+        result: dict[str, Any] = {}
 
         # Add attributes
         if element.attrib:
@@ -207,13 +212,10 @@ class FileFormatHandler:
 
         # Add text content
         if element.text and element.text.strip():
-            if len(element) == 0:  # No children
-                return element.text.strip()
-            else:
-                result["#text"] = element.text.strip()
+            result["#text"] = element.text.strip()
 
         # Add children
-        children = {}
+        children: dict[str, Any] = {}
         for child in element:
             child_data = FileFormatHandler._xml_to_dict(child)
             if child.tag in children:
@@ -224,25 +226,25 @@ class FileFormatHandler:
                 children[child.tag] = child_data
 
         result.update(children)
-        return result if result else None
+        return result
 
     @staticmethod
-    def read_text(path: str) -> str:
+    def read_text(path: str) -> str | ContentWithCustomLength:
         """Read text files"""
         file_size = FileFormatHandler._get_file_size(path)
         if file_size <= LLM_FRIENDLY_MAX_SIZE_IN_BYTES * 2:
             with open(path, encoding="utf-8") as file:
                 return file.read()
         else:
-            f = open(path, "rb")
-            file = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            # Read only the first LLM_FRIENDLY_MAX_SIZE_IN_BYTES * 2 bytes
-            content = file.read(LLM_FRIENDLY_MAX_SIZE_IN_BYTES * 2).decode(
-                "utf-8",
-                errors="replace",
-            )
-            file.close()
-            f.close()
+            with open(path, "rb") as raw_file:
+                mapped_file = mmap.mmap(raw_file.fileno(), 0, access=mmap.ACCESS_READ)
+                try:
+                    content = mapped_file.read(LLM_FRIENDLY_MAX_SIZE_IN_BYTES * 2).decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                finally:
+                    mapped_file.close()
 
             avg_bytes_per_char = len(content) / len(content.encode("utf-8"))
             estimated_char_count = int(
@@ -364,6 +366,7 @@ class DataNormalizer:
             if isinstance(obj, list):
                 return f"[Array({length})]"
             if isinstance(obj, str):
+                length = len(obj)
                 if length > LLM_FRIENDLY_MAX_STRING_LENGTH:
                     return f"{obj[:LLM_FRIENDLY_MAX_STRING_LENGTH]}...{length - LLM_FRIENDLY_MAX_STRING_LENGTH} more characters"
                 else:
@@ -381,15 +384,15 @@ class DataNormalizer:
         try:
             # Special handling for known types
             if isinstance(obj, Exception):
-                result = {
+                exception_payload: dict[str, Any] = {
                     "name": obj.__class__.__name__,
                     "message": str(obj),
                 }
                 if hasattr(obj, "__traceback__") and obj.__traceback__:
-                    result["stack"] = DataNormalizer._truncate_stack(
+                    exception_payload["stack"] = DataNormalizer._truncate_stack(
                         DataNormalizer._format_traceback(obj.__traceback__),
                     )
-                return result
+                return exception_payload
 
             if isinstance(obj, datetime):
                 return obj.isoformat()
@@ -414,7 +417,7 @@ class DataNormalizer:
 
             if hasattr(obj, "__dict__"):
                 # Handle custom objects
-                result = {}
+                object_result: dict[str, Any] = {}
                 obj_dict = obj.__dict__
                 keys = list(obj_dict.keys())
                 max_props = LLM_FRIENDLY_MAX_DICT_KEYS
@@ -431,71 +434,74 @@ class DataNormalizer:
 
                 for i, key in enumerate(keys[:max_props]):
                     try:
-                        result[key] = DataNormalizer.normalize(
+                        object_result[key] = DataNormalizer.normalize(
                             obj_dict[key],
                             effective_max_depth,
                             current_depth + 1,
                             visited,
                         )
                     except Exception:
-                        result[key] = "[Error accessing property]"
+                        object_result[key] = "[Error accessing property]"
 
                 if len(keys) > max_props:
-                    result["..."] = f"{len(keys) - max_props} more properties"
+                    object_result["..."] = f"{len(keys) - max_props} more properties"
 
-                return result
+                return object_result
 
             # Handle lists
             if isinstance(obj, (list, tuple, set)):
                 original_type = obj.__class__
-                result = []
+                sequence_items = list(obj)
+                sequence_length = len(sequence_items)
+                normalized_items: list[Any] = []
                 max_items = LLM_FRIENDLY_MAX_ARRAY_LENGTH
 
-                for i in range(min(length, max_items)):
-                    result.append(
+                for item in sequence_items[:max_items]:
+                    normalized_items.append(
                         DataNormalizer.normalize(
-                            obj[i],
+                            item,
                             max_depth,
                             current_depth + 1,
                             visited,
                         ),
                     )
 
-                if length > max_items:
-                    result.append(f"... {length - max_items} more items")
+                if sequence_length > max_items:
+                    normalized_items.append(f"... {sequence_length - max_items} more items")
 
-                result = original_type(result)
+                sequence_result = original_type(normalized_items)
 
-                return result
+                return sequence_result
 
             # Handle strings
             if isinstance(obj, str):
                 max_length = LLM_FRIENDLY_MAX_STRING_LENGTH
-                if length > max_length:
-                    return f"{obj[:max_length]}...{length - max_length} more characters"
+                str_length = len(obj)
+                if str_length > max_length:
+                    return f"{obj[:max_length]}...{str_length - max_length} more characters"
                 return obj
 
             # Handle dictionaries
             if isinstance(obj, dict):
-                result = {}
+                dict_result: dict[str, Any] = {}
                 keys = list(obj.keys())
                 max_props = LLM_FRIENDLY_MAX_DICT_KEYS
 
                 for i, key in enumerate(keys[:max_props]):
                     try:
-                        result[key] = DataNormalizer.normalize(
+                        dict_result[key] = DataNormalizer.normalize(
                             obj[key],
                             max_depth,
                             current_depth + 1,
                             visited,
                         )
                     except Exception:
-                        result[key] = "[Error accessing property]"
+                        dict_result[key] = "[Error accessing property]"
 
                 if len(keys) > max_props:
-                    result["..."] = f"{len(keys) - max_props} more properties"
+                    dict_result["..."] = f"{len(keys) - max_props} more properties"
 
-                return result
+                return dict_result
 
             # Fallback for other types
             return f"[{obj.__class__.__name__}]"

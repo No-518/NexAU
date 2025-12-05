@@ -174,7 +174,7 @@ def multiedit_tool(
             current_content = original_content
 
         # Apply edits in sequence
-        applied_edits = []
+        applied_edits: list[dict[str, Any]] = []
         for i, edit_op in enumerate(edit_operations):
             if edit_op.old_string not in current_content:
                 return {

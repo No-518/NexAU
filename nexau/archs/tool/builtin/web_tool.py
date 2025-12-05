@@ -29,9 +29,10 @@ class SerperSearch:
     """Serper API search implementation."""
 
     def __init__(self, timeout: float = 30.0, max_retries: int = 3):
-        self.api_key = os.getenv("SERPER_API_KEY")
-        if not self.api_key:
+        api_key = os.getenv("SERPER_API_KEY")
+        if not api_key:
             raise ValueError("Serper API key is required")
+        self.api_key: str = api_key
         self.base_url = "https://google.serper.dev/"
         self.timeout = timeout
         self.max_retries = max_retries
@@ -119,11 +120,15 @@ class HtmlParser:
     """HTML parser for web content extraction."""
 
     def __init__(self):
-        self.base_url = os.getenv("BP_HTML_PARSER_URL")
-        self.api_key = os.getenv("BP_HTML_PARSER_API_KEY")
-        self.secret = os.getenv("BP_HTML_PARSER_SECRET")
+        self.base_url: str | None = os.getenv("BP_HTML_PARSER_URL")
+        self.api_key: str | None = os.getenv("BP_HTML_PARSER_API_KEY")
+        self.secret: str | None = os.getenv("BP_HTML_PARSER_SECRET")
 
     def parse(self, url: str) -> tuple[bool, str]:
+        if not self.base_url or not self.api_key or not self.secret:
+            logger.warning("HTML parser configuration is incomplete; skipping parser request")
+            return False, ""
+
         timestamp = str(int(time.time()))
         headers = {
             "X-API-KEY": self.api_key,
@@ -157,8 +162,8 @@ class HtmlParser:
 
 
 # Global instances
-_serper_search = None
-_html_parser = None
+_serper_search: SerperSearch | None = None
+_html_parser: HtmlParser | None = None
 
 
 def web_search(

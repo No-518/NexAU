@@ -136,7 +136,7 @@ class AgentBuilder:
     def _import_and_instantiate(
         self,
         hook_config: str | dict[str, Any],
-    ) -> Callable:
+    ) -> Any:
         """Import and instantiate a hook from configuration.
 
         Args:

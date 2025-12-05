@@ -20,10 +20,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+tiktoken: Any
 try:
-    import tiktoken
+    import tiktoken as _tiktoken
 
     TIKTOKEN_AVAILABLE = True
+    tiktoken = _tiktoken
 except ImportError:
     TIKTOKEN_AVAILABLE = False
     tiktoken = None

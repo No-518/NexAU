@@ -18,7 +18,7 @@ import copy
 import logging
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import anthropic
 import openai
@@ -97,15 +97,17 @@ class Agent:
 
         # Initialize prompt builder
         self.prompt_builder = PromptBuilder()
+        self._agent_name = self.config.name or f"agent_{uuid.uuid4().hex}"
+        self._agent_id = self.config.agent_id or self._agent_name
 
         # Initialize execution components
         self._initialize_execution_components()
 
         # Conversation history
-        self.history = []
+        self.history: list[dict[str, Any]] = []
 
         # Queue for messages to be processed in the next execution cycle
-        self.queued_messages = []
+        self.queued_messages: list[dict[str, str]] = []
 
         # Register for cleanup
         cleanup_manager.register_agent(self)
@@ -116,13 +118,23 @@ class Agent:
             logger.warning("⚠️ OpenAI package not available")
             return None
 
+        # Guard clause
+        if isinstance(self.config.llm_config, dict):
+            llm_config = LLMConfig(**self.config.llm_config)
+        elif isinstance(self.config.llm_config, LLMConfig):
+            llm_config = self.config.llm_config
+        else:
+            llm_config = LLMConfig()
+
         try:
-            if self.config.llm_config.api_type == "anthropic_chat_completion":
-                client_kwargs = self.config.llm_config.to_client_kwargs()
+            if llm_config.api_type == "anthropic_chat_completion":
+                client_kwargs = llm_config.to_client_kwargs()
                 return anthropic.Anthropic(**client_kwargs)
-            else:
-                client_kwargs = self.config.llm_config.to_client_kwargs()
+            elif llm_config.api_type in ["openai_responses", "openai_chat_completion"]:
+                client_kwargs = llm_config.to_client_kwargs()
                 return openai.OpenAI(**client_kwargs)
+            else:
+                raise ValueError(f"Invalid API type: {llm_config.api_type}")
         except Exception as e:
             logger.error(f"❌ Failed to initialize OpenAI client: {e}")
             return None
@@ -248,21 +260,22 @@ class Agent:
 
     def _initialize_execution_components(self) -> None:
         """Initialize execution components."""
+        token_counter = self._resolve_token_counter()
         # Initialize the Executor
         self.executor = Executor(
-            agent_name=self.config.name,
-            agent_id=self.config.agent_id,
+            agent_name=self._agent_name,
+            agent_id=self._agent_id,
             tool_registry=self.tool_registry,
             serial_tool_name=self.serial_tool_name,
             sub_agent_factories=self.config.sub_agent_factories,
-            stop_tools=self.config.stop_tools,
+            stop_tools=self.config.stop_tools or set(),
             openai_client=self.openai_client,
             llm_config=self.config.llm_config,
             max_iterations=self.exec_config.max_iterations,
             max_context_tokens=self.exec_config.max_context_tokens,
             max_running_subagents=self.exec_config.max_running_subagents,
             retry_attempts=self.exec_config.retry_attempts,
-            token_counter=self.config.token_counter or TokenCounter(),
+            token_counter=token_counter,
             after_model_hooks=self.config.after_model_hooks,
             after_tool_hooks=self.config.after_tool_hooks,
             before_model_hooks=self.config.before_model_hooks,
@@ -272,6 +285,19 @@ class Agent:
             tool_call_mode=self.tool_call_mode,
             openai_tools=self.tool_call_payload,
         )
+
+    def _resolve_token_counter(self) -> TokenCounter:
+        """Cast configured token counter to TokenCounter instance."""
+        configured_counter = self.config.token_counter
+        if isinstance(configured_counter, TokenCounter):
+            return configured_counter
+
+        if callable(configured_counter):
+            custom_counter = TokenCounter()
+            custom_counter._counter = configured_counter  # type: ignore[attr-defined]
+            return custom_counter
+
+        return TokenCounter()
 
     def run(
         self,
@@ -325,8 +351,8 @@ class Agent:
 
             # Create the AgentState instance
             agent_state = AgentState(
-                agent_name=self.config.name,
-                agent_id=self.config.agent_id,
+                agent_name=self._agent_name,
+                agent_id=self._agent_id,
                 context=ctx,
                 global_storage=self.global_storage,
                 parent_agent_state=parent_agent_state,
@@ -364,13 +390,13 @@ class Agent:
         Returns:
             Agent response string
         """
-        span_name = f"Agent: {self.config.name}"
+        span_name = f"Agent: {self._agent_name}"
         inputs = {
             "message": message,
-            "agent_id": self.config.agent_id,
+            "agent_id": self._agent_id,
         }
         attributes = {
-            "agent_name": self.config.name,
+            "agent_name": self._agent_name,
             "model": getattr(self.config.llm_config, "model", None),
         }
 
@@ -479,7 +505,7 @@ def create_agent(
     sub_agents: list[tuple[str, Callable[[], "Agent"]]] | None = None,
     skills: list[Skill] | None = None,
     system_prompt: str | None = None,
-    system_prompt_type: str = "string",
+    system_prompt_type: Literal["string", "file", "jinja"] = "string",
     llm_config: LLMConfig | dict[str, Any] | None = None,
     max_iterations: int = 100,
     max_context_tokens: int = 128000,
@@ -496,7 +522,7 @@ def create_agent(
     # MCP parameters
     mcp_servers: list[dict[str, Any]] | None = None,
     # Stop tools parameters
-    stop_tools: list[str] | None = None,
+    stop_tools: list[str] | set[str] | None = None,
     # Hook parameters
     after_model_hooks: list[Callable] | None = None,
     after_tool_hooks: list[Callable] | None = None,
@@ -517,34 +543,36 @@ def create_agent(
         raise ValueError("llm_config is required")
 
     # Create agent configuration
-    agent_config = AgentConfig(
-        name=name,
-        agent_id=agent_id if agent_id else str(uuid.uuid4()),
-        system_prompt=system_prompt,
-        system_prompt_type=system_prompt_type,
-        tools=tools or [],
-        sub_agents=sub_agents,
-        skills=skills or [],
-        llm_config=llm_config,
-        stop_tools=stop_tools or [],
-        initial_state=initial_state,
-        initial_config=initial_config,
-        initial_context=initial_context,
-        mcp_servers=mcp_servers,
-        after_model_hooks=after_model_hooks,
-        after_tool_hooks=after_tool_hooks,
-        before_model_hooks=before_model_hooks,
-        before_tool_hooks=before_tool_hooks,
-        middlewares=middlewares,
-        error_handler=error_handler,
-        token_counter=token_counter,
-        max_iterations=max_iterations,
-        max_context_tokens=max_context_tokens,
-        max_running_subagents=max_running_subagents,
-        tool_call_mode=tool_call_mode,
-        retry_attempts=retry_attempts,
-        timeout=timeout,
-        tracers=tracers or [],
-    )
+    agent_kwargs: dict[str, Any] = {
+        "name": name,
+        "agent_id": agent_id if agent_id else str(uuid.uuid4()),
+        "system_prompt": system_prompt,
+        "system_prompt_type": system_prompt_type,
+        "tools": tools or [],
+        "sub_agents": sub_agents,
+        "skills": skills or [],
+        "llm_config": llm_config,
+        "stop_tools": set(stop_tools) if stop_tools else None,
+        "initial_state": initial_state,
+        "initial_config": initial_config,
+        "initial_context": initial_context,
+        "mcp_servers": mcp_servers or [],
+        "after_model_hooks": after_model_hooks,
+        "after_tool_hooks": after_tool_hooks,
+        "before_model_hooks": before_model_hooks,
+        "before_tool_hooks": before_tool_hooks,
+        "middlewares": middlewares,
+        "error_handler": error_handler,
+        "token_counter": token_counter,
+        "max_iterations": max_iterations,
+        "max_context_tokens": max_context_tokens,
+        "max_running_subagents": max_running_subagents,
+        "tool_call_mode": tool_call_mode,
+        "retry_attempts": retry_attempts,
+        "timeout": timeout,
+        "tracers": tracers or [],
+    }
+
+    agent_config = AgentConfig(**agent_kwargs)
 
     return Agent(agent_config, global_storage)

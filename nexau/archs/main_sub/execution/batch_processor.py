@@ -21,7 +21,7 @@ import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
-from typing import Any
+from typing import Any, cast
 
 from ..utils.xml_utils import XMLParser
 
@@ -221,7 +221,7 @@ class BatchProcessor:
                     )
 
         # Sort results by line number
-        results.sort(key=lambda x: x["line"])
+        results.sort(key=lambda x: cast(int, x["line"]))
 
         # Generate summary
         total_items = len(results)

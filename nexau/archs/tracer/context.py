@@ -129,7 +129,7 @@ class TraceContext:
         self.token = set_current_span(self.span)
         return self.span
 
-    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: Any) -> bool:
+    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Exit the context and end the span.
 
         Args:
@@ -137,8 +137,6 @@ class TraceContext:
             exc_val: Exception value if an error occurred
             exc_tb: Exception traceback if an error occurred
 
-        Returns:
-            False to propagate any exceptions
         """
         if self.span is not None:
             # End the span with error info if exception occurred
@@ -152,9 +150,6 @@ class TraceContext:
         # Restore the previous parent span
         if self.token is not None:
             reset_current_span(self.token)
-
-        # Don't suppress exceptions
-        return False
 
     def set_outputs(self, outputs: Any) -> None:
         """Set the outputs to be recorded when the span ends.

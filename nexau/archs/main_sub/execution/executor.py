@@ -165,13 +165,13 @@ class Executor:
             )
 
         # Process tracking for parallel execution
-        self._running_executors = {}  # Maps executor_id to ThreadPoolExecutor
+        self._running_executors: dict[str, ThreadPoolExecutor] = {}  # Maps executor_id to ThreadPoolExecutor
         self._executor_lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self.stop_signal = False
 
         # Message queue for dynamic message enqueueing during execution
-        self.queued_messages = []
+        self.queued_messages: list[dict[str, str]] = []
 
     def enqueue_message(self, message: dict[str, str]) -> None:
         """Enqueue a message to be processed during execution.
@@ -499,35 +499,35 @@ class Executor:
         def _hook_name(hook: Callable[..., Any]) -> str:
             return getattr(hook, "__name__", hook.__class__.__name__)
 
-        for hook in before_model_hooks:
+        for bm_hook in before_model_hooks:
             combined.append(
                 FunctionMiddleware(
-                    before_model_hook=hook,
-                    name=f"before_model::{_hook_name(hook)}",
+                    before_model_hook=bm_hook,
+                    name=f"before_model::{_hook_name(bm_hook)}",
                 ),
             )
 
-        for hook in after_model_hooks:
+        for am_hook in after_model_hooks:
             combined.append(
                 FunctionMiddleware(
-                    after_model_hook=hook,
-                    name=f"after_model::{_hook_name(hook)}",
+                    after_model_hook=am_hook,
+                    name=f"after_model::{_hook_name(am_hook)}",
                 ),
             )
 
-        for hook in after_tool_hooks:
+        for at_hook in after_tool_hooks:
             combined.append(
                 FunctionMiddleware(
-                    after_tool_hook=hook,
-                    name=f"after_tool::{_hook_name(hook)}",
+                    after_tool_hook=at_hook,
+                    name=f"after_tool::{_hook_name(at_hook)}",
                 ),
             )
 
-        for hook in before_tool_hooks:
+        for bt_hook in before_tool_hooks:
             combined.append(
                 FunctionMiddleware(
-                    before_tool_hook=hook,
-                    name=f"before_tool::{_hook_name(hook)}",
+                    before_tool_hook=bt_hook,
+                    name=f"before_tool::{_hook_name(bt_hook)}",
                 ),
             )
 
@@ -549,7 +549,7 @@ class Executor:
         # Phase 1: Parse the response to extract all calls
         logger.info("📋 Phase 1: Parsing LLM response for all executable calls")
         response_payload: str | ModelResponse = hook_input.model_response or hook_input.original_response
-        parsed_response = hook_input.parsed_response or self.response_parser.parse_response(
+        parsed_response: ParsedResponse | None = hook_input.parsed_response or self.response_parser.parse_response(
             response_payload,
         )
         hook_input.parsed_response = parsed_response
@@ -561,9 +561,7 @@ class Executor:
         # Execute middlewares if any are configured (always run even if no calls)
         if self.middleware_manager:
             try:
-                parsed_response, current_messages, force_continue = self.middleware_manager.run_after_model(
-                    hook_input,
-                )
+                parsed_response, current_messages, force_continue = self.middleware_manager.run_after_model(hook_input)
             except Exception as e:
                 logger.warning(f"⚠️ After-model middleware execution failed: {e}")
 
@@ -586,6 +584,7 @@ class Executor:
         logger.info(
             f"⚡ Phase 2: Executing {parsed_response.get_call_summary()}",
         )
+        assert parsed_response is not None
         processed_response, should_stop, stop_tool_result, execution_feedbacks = self._execute_parsed_calls(
             parsed_response,
             hook_input.agent_state,
@@ -596,7 +595,7 @@ class Executor:
         self,
         parsed_response: ParsedResponse,
         agent_state: "AgentState",
-    ) -> tuple[str, bool, str | None]:
+    ) -> tuple[str, bool, str | None, list[dict[str, Any]]]:
         """Execute all parsed calls in parallel.
 
         Args:
@@ -658,20 +657,26 @@ class Executor:
             self._running_executors[f"{executor_id}_subagents"] = subagent_executor
 
         # Handle duplicate tool_call_ids by adding suffixes
-        seen_tool_call_ids = defaultdict(int)
-        for tool_call in parsed_response.tool_calls:
-            if tool_call.tool_call_id in seen_tool_call_ids:
-                seen_tool_call_ids[tool_call.tool_call_id] += 1
-                tool_call.tool_call_id = f"{tool_call.tool_call_id}_{seen_tool_call_ids[tool_call.tool_call_id]}"
+        seen_tool_call_ids: defaultdict[str, int] = defaultdict(int)
+        for idx, tool_call in enumerate(parsed_response.tool_calls):
+            base_id = tool_call.tool_call_id or f"tool_call_{idx}"
+            count = seen_tool_call_ids[base_id]
+            if count:
+                tool_call.tool_call_id = f"{base_id}_{count}"
+            else:
+                tool_call.tool_call_id = base_id
+            seen_tool_call_ids[base_id] += 1
 
         # Handle duplicate sub_agent_call_ids by adding suffixes
-        seen_sub_agent_call_ids = defaultdict(int)
-        for sub_agent_call in parsed_response.sub_agent_calls:
-            if sub_agent_call.sub_agent_call_id in seen_sub_agent_call_ids:
-                seen_sub_agent_call_ids[sub_agent_call.sub_agent_call_id] += 1
-                sub_agent_call.sub_agent_call_id = (
-                    f"{sub_agent_call.sub_agent_call_id}_{seen_sub_agent_call_ids[sub_agent_call.sub_agent_call_id]}"
-                )
+        seen_sub_agent_call_ids: defaultdict[str, int] = defaultdict(int)
+        for idx, sub_agent_call in enumerate(parsed_response.sub_agent_calls):
+            base_id = sub_agent_call.sub_agent_call_id or f"sub_agent_call_{idx}"
+            count = seen_sub_agent_call_ids[base_id]
+            if count:
+                sub_agent_call.sub_agent_call_id = f"{base_id}_{count}"
+            else:
+                sub_agent_call.sub_agent_call_id = base_id
+            seen_sub_agent_call_ids[base_id] += 1
 
         serial_tool_names = set(self.serial_tool_name)
 
@@ -878,8 +883,12 @@ class Executor:
                     param_value,
                 )
 
+            tool_call_id = tool_call.tool_call_id or f"tool_call_{uuid.uuid4()}"
             result = self.tool_executor.execute_tool(
-                agent_state, tool_call.tool_name, converted_params, tool_call_id=tool_call.tool_call_id
+                agent_state,
+                tool_call.tool_name,
+                converted_params,
+                tool_call_id=tool_call_id,
             )
 
             return (

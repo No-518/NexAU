@@ -128,7 +128,7 @@ class LLMConfig:
 
     def to_openai_params(self) -> dict[str, Any]:
         """Convert to OpenAI client parameters."""
-        params = {}
+        params: dict[str, Any] = {}
 
         # Model parameters
         if self.model:
@@ -153,7 +153,7 @@ class LLMConfig:
 
     def to_client_kwargs(self) -> dict[str, Any]:
         """Convert to OpenAI client initialization kwargs."""
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
 
         if self.api_key:
             kwargs["api_key"] = self.api_key

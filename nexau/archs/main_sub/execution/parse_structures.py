@@ -106,7 +106,7 @@ class ParsedResponse:
 
     def get_all_calls(self) -> list[ExecutableCall]:
         """Get all calls in execution order."""
-        all_calls = []
+        all_calls: list[ToolCall | SubAgentCall | BatchAgentCall] = []
         all_calls.extend(self.tool_calls)
         all_calls.extend(self.sub_agent_calls)
         all_calls.extend(self.batch_agent_calls)
@@ -118,7 +118,7 @@ class ParsedResponse:
 
     def get_call_summary(self) -> str:
         """Get a summary of all calls."""
-        summary_parts = []
+        summary_parts: list[str] = []
         if self.tool_calls:
             summary_parts.append(f"{len(self.tool_calls)} tool calls")
         if self.sub_agent_calls:

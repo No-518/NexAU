@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 
 def _item_get(item: Any, key: str, default: Any = None) -> Any:
@@ -137,9 +137,9 @@ class ModelToolCall:
             raise ValueError("call payload cannot be None")
 
         # Support both dict-style and attribute-style payloads
-        get = call.get if isinstance(call, dict) else getattr
-        call_id = get("id") if isinstance(call, dict) else getattr(call, "id", None)
-        call_type = get("type") if isinstance(call, dict) else getattr(call, "type", "function")
+        call_id = call.get("id") if isinstance(call, dict) else getattr(cast(Any, call), "id", None)
+
+        call_type = call.get("type") if isinstance(call, dict) else getattr(cast(Any, call), "type", "function")
 
         function = None
         if isinstance(call, dict):
@@ -355,10 +355,11 @@ class ModelResponse:
                     arguments = getattr(call, "input", {})
                     call_type = getattr(call, "type", "function")
 
+                name_value = name or ""
                 tool_calls.append(
                     ModelToolCall(
                         call_id=call_id,
-                        name=name,
+                        name=name_value,
                         arguments=arguments,
                         raw_arguments=json.dumps(arguments, ensure_ascii=False),
                         call_type=call_type,
@@ -559,7 +560,7 @@ class ModelResponse:
         parts: list[str] = []
         if self.reasoning_content:
             parts.append(f"[reasoning]\n{self.reasoning_content}")
-        if self.has_content():
+        if self.has_content() and self.content:
             parts.append(self.content.strip())
         for call in self.tool_calls:
             try:

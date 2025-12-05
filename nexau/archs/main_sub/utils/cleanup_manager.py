@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 class CleanupManager:
     """Singleton manager for agent cleanup on process termination."""
 
-    _instance = None
+    _instance: "CleanupManager | None" = None
     _lock = threading.Lock()
 
-    def __new__(cls):
+    def __new__(cls) -> "CleanupManager":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:

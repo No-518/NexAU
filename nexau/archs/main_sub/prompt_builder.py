@@ -64,8 +64,8 @@ class PromptBuilder:
     def build_system_prompt(
         self,
         agent_config: AgentConfig,
-        tools: list[Tool] = None,
-        sub_agent_factories: dict[str, Any] = None,
+        tools: list[Tool] | None = None,
+        sub_agent_factories: dict[str, Any] | None = None,
         runtime_context: dict | None = None,
         include_tool_instructions: bool = True,
     ) -> str:
@@ -82,9 +82,12 @@ class PromptBuilder:
         """
         try:
             # Get base system prompt
-            base_prompt = self._get_base_system_prompt(
-                agent_config,
-                runtime_context,
+            base_prompt = (
+                self._get_base_system_prompt(
+                    agent_config,
+                    runtime_context,
+                )
+                or ""
             )
 
             if include_tool_instructions:
@@ -98,7 +101,7 @@ class PromptBuilder:
                 # Add tool execution instructions
                 execution_instructions = ""
 
-                execution_instructions = self._get_tool_execution_instructions()
+                execution_instructions = self._get_tool_execution_instructions() or ""
 
                 return f"{base_prompt}{capabilities_docs}{execution_instructions}"
             else:
@@ -112,10 +115,11 @@ class PromptBuilder:
         self,
         agent_config: AgentConfig,
         runtime_context: dict | None = None,
-    ) -> str:
+    ) -> str | None:
         """Get the base system prompt from configuration."""
         if not agent_config.system_prompt:
-            return self._get_default_system_prompt(agent_config.name)
+            agent_name = agent_config.name or "agent"
+            return self._get_default_system_prompt(agent_name)
 
         try:
             # Build context for template rendering
@@ -135,7 +139,7 @@ class PromptBuilder:
             logger.error(f"❌ Error processing system prompt: {e}")
             raise ValueError("Error processing system prompt") from e
 
-    def _get_default_system_prompt(self, agent_name: str) -> str:
+    def _get_default_system_prompt(self, agent_name: str) -> str | None:
         """Get default system prompt for the agent."""
         try:
             template = self._load_prompt_template("default_system_prompt")
@@ -146,6 +150,7 @@ class PromptBuilder:
         except Exception as e:
             logger.warning(f"⚠️ Error loading default system prompt: {e}")
             raise ValueError("Error loading default system prompt") from e
+        return None
 
     def _build_capabilities_docs(
         self,
@@ -263,7 +268,7 @@ class PromptBuilder:
 
         return parameters
 
-    def _get_tool_execution_instructions(self) -> str:
+    def _get_tool_execution_instructions(self) -> str | None:
         """Get tool execution instructions."""
         try:
             template = self._load_prompt_template(
@@ -273,6 +278,7 @@ class PromptBuilder:
                 return template
         except Exception as e:
             raise ValueError("Error loading tool execution instructions") from e
+        return None
 
     def _build_template_context(
         self,
