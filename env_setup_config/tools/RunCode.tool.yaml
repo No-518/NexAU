@@ -1,0 +1,34 @@
+type: tool
+name: RunCode
+description: >-
+  Executes a code block in a Jupyter kernel (Python or Bash) and returns captured
+  outputs/errors. Use this when you need to run multi-line code with structured
+  outputs, or when you want a persistent Python/Bash kernel between calls.
+input_schema:
+  type: object
+  properties:
+    code_block:
+      type: string
+      description: The code to execute (required).
+    kernel_type:
+      type: string
+      enum:
+        - python
+        - bash
+      description: "Which kernel to run the code in (default: python)."
+    timeout:
+      type: number
+      description: Optional timeout in milliseconds (max 600000).
+    description:
+      type: string
+      description: Clear, concise description of what this code does in 5-10 words.
+    reset_kernel:
+      type: boolean
+      description: Whether to restart the kernel before executing the code.
+    shutdown_after:
+      type: boolean
+      description: Whether to shutdown all kernels after execution.
+  required:
+    - code_block
+  additionalProperties: false
+  $schema: http://json-schema.org/draft-07/schema#

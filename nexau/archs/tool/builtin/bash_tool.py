@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Maximum output length to prevent overwhelming responses
 MAX_OUTPUT_LENGTH = 30000
 DEFAULT_TIMEOUT = 120000  # 2 minutes in milliseconds
-MAX_TIMEOUT = 600000  # 10 minutes in milliseconds
+MAX_TIMEOUT = 3600000  # 60 minutes in milliseconds
 
 
 def bash_tool(
@@ -42,7 +42,7 @@ def bash_tool(
 
     Args:
         command: The bash command to execute (required)
-        timeout: Optional timeout in milliseconds (max 600000ms / 10 minutes)
+        timeout: Optional timeout in milliseconds (max 3600000ms / 60 minutes)
         description: Clear, concise description of what this command does in 5-10 words
         agent_state: AgentState containing agent context and global storage
 
@@ -61,7 +61,7 @@ def bash_tool(
     elif timeout > MAX_TIMEOUT:
         return {
             "status": "error",
-            "error": f"Timeout cannot exceed {MAX_TIMEOUT}ms (10 minutes)",
+            "error": f"Timeout cannot exceed {MAX_TIMEOUT}ms (60 minutes)",
             "command": command,
             "duration_ms": 0,
         }
