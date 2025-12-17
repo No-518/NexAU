@@ -3,6 +3,11 @@
 </p>
 
 
+# Usage
+
+./run-agent agents/openai_responses.yaml
+NEXAU_AGENT_CONFIG=env_setup_config/deepseek-v3.1-nex-n1.yaml .venv/bin/python env_setup_config/run_once.py "task prompt"
+
 # NexAU Framework
 
 A general-purpose agent framework for building intelligent agents with tool capabilities.
