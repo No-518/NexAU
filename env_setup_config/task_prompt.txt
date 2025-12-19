@@ -1,0 +1,16 @@
+You are given a machine learning repository.
+
+Your task is to configure a working Python environment for this repository
+such that the code is importable and minimally executable.
+
+You may use conda, uv, pip, or virtual environments as needed.
+You must not modify the repository source code.
+
+Environment preference (if any):
+- Preferred environment tool: [conda / uv / venv / pip / none]
+
+Before finishing, write a JSON report to:
+  /opt/scimlopsbench/report.json
+
+The report must describe the Python interpreter you used,
+the environment setup method, and any relevant system capabilities.
