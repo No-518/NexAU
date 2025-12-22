@@ -1,16 +1,51 @@
-You are given a machine learning repository.
+You are given a machine learning repository (already checked out).
+Work from the repository root directory.
 
-Your task is to configure a working Python environment for this repository
-such that the code is importable and minimally executable.
+Goal:
+- Configure a working Python environment such that the repository code is importable
+  and minimally executable (smoke-level).
+- Do NOT modify repository source code or tracked configuration files.
 
-You may use conda, uv, pip, or virtual environments as needed.
-You must not modify the repository source code.
+Allowed tools:
+- You MAY use conda/mamba/micromamba, pip, uv, or venv as needed.
+- Preferred environment tool: conda (must try first).
+- You MAY install system packages via apt only if strictly required for build/runtime stability.
 
-Environment preference (if any):
-- Preferred environment tool: [conda / uv / venv / pip / none]
+Critical requirement:
+- At the end, there must be ONE python interpreter that you explicitly choose and validate.
+- All evaluation will use ONLY the python interpreter you report in python_path.
 
-Before finishing, write a JSON report to:
-  /opt/scimlopsbench/report.json
+Required validation steps (must be executed and reflected in notes):
+1) Print python path and version:
+   - which python
+   - python --version
+2) Dependency/import smoke test:
+   - python -c "import <REPO_IMPORT_TARGET>; print('import_ok')"
+   (If unknown, find a reasonable import target by inspecting packaging metadata.)
+3) If PyTorch is installed or relevant:
+   - python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.device_count())"
+   - If nvidia-smi exists, run it to confirm GPU visibility.
+4) Record installed packages (at least one):
+   - conda list OR pip list
 
-The report must describe the Python interpreter you used,
-the environment setup method, and any relevant system capabilities.
+Report (mandatory):
+- Write a valid JSON file to /opt/scimlopsbench/report.json with at least:
+  {
+    "python_path": "...(absolute path)...",
+    "python_version": "...",
+    "torch_version": "... or null",
+    "cuda_available": true/false,
+    "gpu_count": number,
+    "ddp_expected_ok": true/false/null,
+    "env_tool": "conda|uv|pip|poetry|venv|none",
+    "env_name": "...",
+    "notes": "Key commands run, decisions, and uncertainties"
+  }
+- cuda_available/gpu_count must be based on actual checks, not assumptions.
+
+Logging:
+- Clearly log all key commands used for environment creation, installation, and validation.
+
+Failure handling:
+- If you cannot complete setup, still write report.json with nulls where needed,
+  and explain the failure and attempted fixes in notes.
