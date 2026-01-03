@@ -185,8 +185,14 @@ export default function App({yamlPath}) {
 
 		// Start the Python agent process
 		const pythonScript = path.join(__dirname, '..', 'agent_runner.py');
+		const repoRoot = path.join(__dirname, '..', '..');
 		const python = spawn('uv', ['run', 'python', pythonScript, yamlPath], {
-			cwd: path.join(__dirname, '..', '..'),
+			cwd: repoRoot,
+			env: {
+				...process.env,
+				UV_CACHE_DIR:
+					process.env.UV_CACHE_DIR ?? path.join(repoRoot, '.tool_cache', 'uv'),
+			},
 		});
 
 		agentProcess.current = python;
@@ -325,7 +331,7 @@ export default function App({yamlPath}) {
 
 		python.on('close', code => {
 			if (code !== 0) {
-				setError(`Agent process exited with code ${code}`);
+				setError(prev => prev ?? `Agent process exited with code ${code}`);
 			}
 		});
 
