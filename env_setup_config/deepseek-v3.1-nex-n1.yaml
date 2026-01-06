@@ -3,7 +3,8 @@ name: nexau_env_setup_agent
 description: Environment bootstrap agent
 
 max_context_tokens: 100000
-tool_call_mode: openai
+# tool_call_mode: openai
+tool_call_mode: anthropic
 
 system_prompt: ./system_prompt.md
 system_prompt_type: jinja
@@ -13,7 +14,7 @@ llm_config: # Support environment variable replacement in YAML config
   base_url: ${env.LLM_BASE_URL}
   api_key: ${env.LLM_API_KEY}
   temperature: 0.2
-  max_tokens: 100000
+  max_tokens: 4096
   stream: True
   api_type: anthropic_chat_completion # support openai_chat_completion (default), openai_responses (especially for gpt-5-codex), anthropic_chat_completion
 
