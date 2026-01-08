@@ -8,7 +8,7 @@ Task:
 - Final functional testing will be done after setup; please keep the setup reproducible.
 
 Environment preference:
-- Prefer conda for environment creation in this repo (pip inside conda is allowed when needed).
+- Prefer conda/uv for environment creation in this repo (pip inside conda is allowed when needed).
 - Choose a Python version based on repository metadata when possible; otherwise pick a widely compatible version.
 
 Reproducibility & auditability:
